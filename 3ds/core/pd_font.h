@@ -5,6 +5,11 @@
 
 #include <stdint.h>
 
+// rpcndr.h (Windows) defines small as char; this header uses it as a parameter name.
+#ifdef small
+#undef small
+#endif
+
 #define PD_FONT_HEIGHT 16
 
 struct pd_glyph {

@@ -13,6 +13,11 @@
 
 #include <stdbool.h>
 
+// rpcndr.h (Windows) defines small as char; this header uses it as a parameter name.
+#ifdef small
+#undef small
+#endif
+
 #include "pd_canvas.h"
 #include "pd_game.h"
 #include "pd_games.h"
