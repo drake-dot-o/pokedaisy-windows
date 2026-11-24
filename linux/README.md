@@ -61,11 +61,11 @@ STATE, LOAD STATE, HOTKEYS, REWIND (keeps the last ~20 s while on, in a 32 MB bu
 SWAPPED trades A with B and X with Y on controllers) and QUIT (QUIT TO GAME LIST when the game came from the list).
 Fast-forward is the FAST FORWARD hotkey's, while it is held. `POCKET_MENU_COMBO=off` reserves START+SELECT for PortMaster's exit without opening the host menu. The game pauses while it is open.
 
-Hold SELECT and press R2 to fast-forward, or L2 to rewind when enabled. A plain SELECT tap reaches the game
-on release. In HOTKEYS you can rebind FAST FORWARD, REWIND, SAVE STATE and LOAD STATE (save and load start off).
-Pick a row, then press a shoulder, stick click, X, Y or a reported paddle. B cancels and SELECT clears the action.
-The MODIFIER row is shared by all cores. It accepts START and the same buttons as action bindings. Press SELECT
-in that row to choose SELECT or toggle the modifier off. With the modifier off, hotkeys use single buttons.
+FAST FORWARD is R2 alone, held; REWIND is L2 alone when REWIND is on. A plain SELECT tap reaches the game. In
+HOTKEYS you can rebind FAST FORWARD, REWIND, SAVE STATE and LOAD STATE (save and load start off). Pick a row, then
+press a shoulder, stick click, X, Y or a reported paddle. B cancels and SELECT clears the action. The MODIFIER row is
+shared by all cores: it starts off, so each hotkey is its button alone. Press SELECT, START or another assignable
+button in that row to require holding it, or SELECT to turn it off again.
 Bindings are stored in DATA/host.ini. Fast-forward plays its sound sped up.
 
 SDL GameController mappings take priority. The right face button acts as game A; the bottom button acts as game B.
@@ -156,10 +156,10 @@ are in NOTICE and the packaged licenses (mGBA, and armGBA and zlib for the GBA c
 ## Nintendo DS
 
 The bundled DS core starts in its One Screen layout. L2 opens the Companion and R2 switches screens by default.
-L3 opens Quick Menu (holding L2 still does). With SELECT as the host modifier, SELECT + Y toggles stylus mode and SELECT + D-pad/A
-moves or taps the stylus. DS host actions can be rebound separately in HOTKEYS (SELECT + R2 / L2 by default; with
-the modifier off they move to R3 / L3, since bare R2 / L2 belong to the core). Companion Settings → HUD opens the shared HUD
-page (on or off, LOOK, SIZE and each part), as on the GB and GBA cores. MINIMAL HUD hides the party cards.
+L3 opens Quick Menu (holding L2 still does). SELECT + Y toggles stylus mode; SELECT + D-pad / A moves or taps the
+stylus. DS host actions can be rebound separately in HOTKEYS: R3 / L3 by default, since bare R2 / L2 belong to the
+core; with a modifier set they move back to R2 / L2. Companion Settings → HUD opens the shared HUD page (on or off,
+LOOK, SIZE and each part), as on the GB and GBA cores. MINIMAL HUD hides the party cards.
 
 To bring over an existing DS battery save, copy its raw save data to `DATA/saves/<game>.nds.sav`, or to
 `DATA/saves/<game>.sav` (a save named without the ROM extension is found too), or pass its path with `--save`.

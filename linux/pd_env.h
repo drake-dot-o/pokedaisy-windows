@@ -28,7 +28,7 @@ struct pd_hud {
   const uint32_t *pixels; /* src_w x src_h, the HUD's own 256x192, ARGB8888, alpha 0 = clear */
   int src_w, src_h;
   int x, y, w, h;         /* the HUD's box in the core's canvas (the 1x top screen's place at every ZOOM step) */
-  int pct;                /* 100: the picture over the whole box. 50: each quarter at its own corner, a quarter of the box */
+  int pct;                /* 100: the picture over the whole box. Less: each quarter at its own corner, scaled by pct */
   int active;
 };
 

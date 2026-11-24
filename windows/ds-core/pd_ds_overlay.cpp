@@ -78,7 +78,7 @@ int hudBoxX = 0, hudBoxY = 0, hudBoxW = PK_NDS_W, hudBoxH = PK_NDS_H;
 std::vector<uint32_t> hudNative;           // the HUD at the window's pixels, for a host that draws it (overlay_hud_native)
 bool hudNativeOn = false;                  // this frame's HUD is over the picture
 bool hudHost = false;                      // the host draws it (PD_ENV_SET_HUD): draw_hud keeps it out of the frame
-int hudNativePct = 0;                      // SIZE the picture was last handed over for (100 the box, 50 its corners)
+int hudNativePct = 0;                      // SIZE's percentage: 100 the box, less its four corners, each a quarter scaled by it
 bool viewShown = false;                    // the top screen is the one in the picture
 bool pointerDown = false;                  // last frame's mouse / touch press, for a click on the HUD or the menu
 int frameFieldBits = 0;                    // this frame's field read, for the core's battle-wide picture
@@ -532,8 +532,8 @@ void hud_open_target(int target)
 }
 
 // The HUD's own 256x192 picture as the host takes it (PD_ENV_SET_HUD): ARGB, alpha 0 clear, the 24-bit colours the HUD
-// draws opaque. The host places its quarters itself, so SMALL and NORMAL keep the picture's own pixels at the box's
-// corners (a quarter of it) rather than a half-size copy resampled here.
+// draws opaque. The host places its quarters itself at SIZE's percentage, so SMALL and NORMAL keep the picture's own
+// pixels at the box's corners rather than a resampled copy here.
 void hud_native_copy(void)
 {
     hudNative.assign((size_t) PK_NDS_W * PK_NDS_H, 0);
@@ -652,9 +652,9 @@ void draw_hud(std::vector<uint32_t>& frame, int w, int h)
     if (hudHits.n <= 0) hudFocus = -1;
     // Over the picture: a HUD pixel's alpha is how much of it the game shows through, as the quick menu's. The 256x192
     // picture goes over the four corners of its box (the 1x top screen, scaled with the window), each quarter to its own
-    // corner, so a ZOOM step never pulls the HUD toward the middle; SMALL and NORMAL are half of it, a pixel the average
-    // of the picture pixels it covers. The boxes are clipped to the picture.
-    const int pct = shell.settings.hudSize == PD_HUD_LARGE ? 100 : 50;
+    // corner, so a ZOOM step never pulls the HUD toward the middle; SIZE sets the scale, a pixel the average of the
+    // picture pixels it covers. The boxes are clipped to the picture.
+    const int pct = pd_hud_pct(shell.settings.hudSize);
     const int bw = hudBoxW * pct / 100, bh = hudBoxH * pct / 100;
     // A host that draws the HUD takes it at its own resolution instead (overlay_hud_native); the blend below is the same
     // picture for every other frontend.
@@ -888,8 +888,8 @@ bool overlay_pointer(int x, int y, bool down)
         }
     } else if (!companionShown && hudHits.n > 0 && viewShown) {
         // The HUD's own pixels take the click (and the touch screen doesn't): its hit boxes are in its own 256x192
-        // space, its picture over the four corners of its box at half size for SMALL and NORMAL (draw_hud's blend).
-        const int pct = shell.settings.hudSize == PD_HUD_LARGE ? 100 : 50;
+        // space, its picture over the four corners of its box at SIZE's scale (draw_hud's blend).
+        const int pct = pd_hud_pct(shell.settings.hudSize);
         const int bw = hudBoxW * pct / 100, bh = hudBoxH * pct / 100, qw = bw / 2, qh = bh / 2;
         int hx = -1, hy = -1;
         bool over = bw >= 2 && bh >= 2 && x >= hudBoxX && y >= hudBoxY && x < hudBoxX + hudBoxW &&

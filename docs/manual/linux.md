@@ -99,8 +99,8 @@ names saves by the file name alone.
 
 In Platinum (USA, revision 1), L2 opens the companion, L3 opens the quick menu, and holding L2 opens it too. Set `SETTINGS` >
 `DS LAYOUT` to `ONE SCREEN` to play on the whole screen, with the touch screen and menus floating in when the game
-wants them. R2 switches to the bottom or top screen by hand. Hold SELECT and press Y to show or hide a floating
-touch screen in `ONE SCREEN` or `PICTURE IN PICTURE`. SELECT + D-pad moves the stylus and SELECT + A taps.
+wants them. R2 switches to the bottom or top screen by hand. SELECT + Y shows or hides a floating touch screen in
+`ONE SCREEN` or `PICTURE IN PICTURE`; SELECT + D-pad moves the stylus and SELECT + A taps.
 
 The DS companion reads Platinum (USA, revision 1), the US HeartGold, SoulSilver, Black, White, Black 2 and White 2,
 and the German HeartGold, SoulSilver, Black, White, Black 2 and White 2. In a German game its own names stay English.
@@ -319,24 +319,22 @@ pauses while it's open.
 
 ### Hotkeys
 
-Hotkeys work while you hold SELECT, so their buttons stay the game's the rest of the time. `HOTKEYS` gives these a
-button each:
+Hotkeys are single buttons by default (`MODIFIER` off), so their buttons stay the game's the rest of the time.
+`HOTKEYS` gives these a button each:
 
-- `FAST FORWARD`: the game runs fast while you hold SELECT and the button. R2 to start with.
-- `REWIND`: the game runs backwards while you hold SELECT and the button, with `REWIND` set to `ON`. L2 to start with.
-- `SAVE STATE` and `LOAD STATE`: one press each, with SELECT held. Off to start with.
-- `MODIFIER`: the button you hold for the hotkeys. SELECT to start with. Press START or a hotkey button to use that
-  instead, or press SELECT to turn it off; then each hotkey is its button alone, and that button never reaches the game.
-
-A short press of SELECT on its own still reaches the game when you let go.
+- `FAST FORWARD`: the game runs fast while you hold the button. R2 to start with.
+- `REWIND`: the game runs backwards while you hold the button, with `REWIND` set to `ON`. L2 to start with.
+- `SAVE STATE` and `LOAD STATE`: one press each. Off to start with.
+- `MODIFIER`: off to start with. Press SELECT, START or another assignable button in that row to require holding it for
+  every hotkey; press SELECT again to turn it off. A modifier button never reaches the game.
 
 Pick a row, then press the button you want. B cancels and SELECT turns the hotkey off. L1, R1, L2, R2, X, Y, either
 stick's click and back buttons can be hotkeys; A, B, START, SELECT and the D-pad stay the game's. A button that
 another hotkey had moves over to the new one, and the `MODIFIER` can't be a hotkey's button too.
 
-DS games keep hotkeys of their own, also SELECT + R2 and SELECT + L2 to start with. With the `MODIFIER` off they move
-to R3 and L3, since R2 and L2 alone are the DS's screen and companion buttons. On a Steam Deck, the back buttons reach
-PokeDaisy only when Steam passes them on.
+DS games keep hotkeys of their own: R3 and L3 to start with, since bare R2 and L2 are the DS's screen and companion
+buttons. With a `MODIFIER` set they move back to R2 and L2. On a Steam Deck, the back buttons reach PokeDaisy only
+when Steam passes them on.
 
 ### Keyboard
 

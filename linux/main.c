@@ -630,8 +630,9 @@ static struct {
   bool fullscreen; // the WINDOW setting
   int panel;       // the PANEL setting: 0 = the window's size, else a preset the core lays out for
   char romDir[PATH_MAX], saveDir[PATH_MAX]; // a folder outside LocalState, from SETTINGS > FOLDERS
-} hostSet = {0, false, false, false, {R2, L2, -1, -1}, {R2, L2, -1, -1}, SELECT, false, 0, {0}, {0}};
+} hostSet = {0, false, false, false, {R2, L2, -1, -1}, {R2, L2, -1, -1}, -1, false, 0, {0}, {0}};
 static char hostIni[PATH_MAX];
+static void host_save(void);
 /* A DS game's L2 / R2 are its companion and screen buttons: with no modifier held for them, its FAST FORWARD and REWIND
  * go back to the stick clicks (R3 / L3), and come back to R2 / L2 when a modifier is picked again. */
 static void ds_hotkeys_follow_modifier(void) {
@@ -688,7 +689,7 @@ static void host_load(void) {
   FILE *f = fopen(hostIni, "r");
   char line[PATH_MAX];
   int v;
-  bool modifierSaved = false;
+  bool modifierSaved = false, modifierChosen = false;
   while (f && fgets(line, sizeof line, f)) {
     line[strcspn(line, "\r\n")] = 0;
     if (!strncmp(line, "rom_dir=", 8)) {
@@ -713,6 +714,8 @@ static void host_load(void) {
       hostSet.fullscreen = v != 0;
     if (sscanf(line, "panel=%d", &v) == 1 && v >= 0 && v < PD_PANEL_PRESETS)
       hostSet.panel = v;
+    if (sscanf(line, "hk_modifier_set=%d", &v) == 1)
+      modifierChosen = v != 0;
     char modifier[16];
     if (sscanf(line, "hk_modifier=%15s", modifier) == 1) {
       int k = key_named(modifier);
@@ -739,6 +742,18 @@ static void host_load(void) {
   }
   if (f)
     fclose(f);
+  // Before 1.0.0.7 SELECT was the default MODIFIER, so every hotkey was a chord and R2 on its own did nothing.
+  // Move that old default (and only the old default bindings) to no modifier once, so FAST FORWARD is R2 alone.
+  const bool oldDefaultHotkeys = hostSet.hotkey[HK_FF] == R2 && hostSet.hotkey[HK_REWIND] == L2 &&
+                                 hostSet.hotkey[HK_SAVE] < 0 && hostSet.hotkey[HK_LOAD] < 0 &&
+                                 hostSet.dsHotkey[HK_FF] == R2 && hostSet.dsHotkey[HK_REWIND] == L2 &&
+                                 hostSet.dsHotkey[HK_SAVE] < 0 && hostSet.dsHotkey[HK_LOAD] < 0;
+  if (!modifierChosen && hostSet.modifier == SELECT && oldDefaultHotkeys) {
+    hostSet.modifier = -1;
+    ds_hotkeys_follow_modifier();
+    host_save();
+    fprintf(stderr, "Hotkeys: the old SELECT modifier is off; FAST FORWARD is R2 alone\n");
+  }
   if (!modifierSaved && hostSet.dsHotkey[HK_FF] == R3 && hostSet.dsHotkey[HK_REWIND] == L3) {
     hostSet.dsHotkey[HK_FF] = R2;
     hostSet.dsHotkey[HK_REWIND] = L2;
@@ -753,7 +768,7 @@ static void host_save(void) {
   fprintf(f, "ff_speed=%d\nrewind=%d\nlcd=%d\nswap_ab=%d\n", hostSet.ffSpeed, hostSet.rewind, hostSet.lcd, hostSet.swapAB);
   fprintf(f, "fullscreen=%d\npanel=%d\n", hostSet.fullscreen, hostSet.panel);
   fprintf(f, "rom_dir=%s\nsave_dir=%s\n", hostSet.romDir, hostSet.saveDir);
-  fprintf(f, "hk_modifier=%s\n", key_name(hostSet.modifier));
+  fprintf(f, "hk_modifier=%s\nhk_modifier_set=1\n", key_name(hostSet.modifier));
   for (int i = 0; i < HK_ACTIONS; i++) {
     fprintf(f, "hk_%s=%s\n", hotkeyIds[i], key_name(hostSet.hotkey[i]));
     fprintf(f, "ds_hk_%s=%s\n", hotkeyIds[i], key_name(hostSet.dsHotkey[i]));

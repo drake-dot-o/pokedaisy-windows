@@ -720,7 +720,7 @@ static bool hudFocus, hudShown;
 /* The frontend draws the field HUD itself (PD_ENV_SET_HUD): a ZOOM step's canvas is scaled to the window, and a HUD
  * blended into it would be resampled with the picture, soft at 1x and sharp only at 2x. */
 static bool hudHost, hudNativeOn;
-static int hudNativePct; // SIZE the picture goes over the box for: 100 the whole box, 50 its four corners
+static int hudNativePct; // SIZE's percentage: 100 the whole box, less its four corners, each a quarter scaled by it
 static uint32_t *hudPixels;
 static uint32_t hudDrawnKey;
 static int hudW, hudH;
@@ -884,7 +884,7 @@ static int want_zoom(void);
 static void canvas_for(int fw, int fh, int kind, int extra, int *w, int *h);
 
 /* The HUD over the game's own picture, a canvas pixel a game pixel: SIZE picks the mini HUD (SMALL, NORMAL) or the full
- * one (LARGE). */
+ * one (LARGE), and pd_hud_pct its scale. */
 static void draw_hud(void) {
   hudNativeOn = false;
   int gs = game_scale(gameW, gameH);
@@ -900,6 +900,7 @@ static void draw_hud(void) {
   }
   // SMALL / NORMAL: the mini HUD (a core's canvas is the game's own pixels, shown 3x to 6x); LARGE: the full one.
   hudState.mini = settings.hudSize != PD_HUD_LARGE;
+  const int pct = pd_hud_pct(settings.hudSize);
   int scale = canvasScale;
   int w = aw / scale, hh = ah / scale;
   if (base) { // the canvas at 1x, the HUD's layout at every step
@@ -909,7 +910,6 @@ static void draw_hud(void) {
     if (bw > 0 && bh > 0)
       w = bw, hh = bh;
   }
-  const bool small = settings.hudSize != PD_HUD_LARGE; // SIZE's smaller HUD: half the pixels, at the canvas's corners
   if (!hudPixels)
     hudPixels = malloc((size_t)CANVAS_MAX_W * CANVAS_MAX_H * sizeof *hudPixels);
   if (!hudPixels)
@@ -925,16 +925,15 @@ static void draw_hud(void) {
     hudH = hh;
   }
   // A host that draws the HUD itself (PD_ENV_SET_HUD: the Linux / Windows host) gets it at the window's corners whatever
-  // the step, half size for SMALL and NORMAL. Any other frontend (RetroArch) keeps the HUD in the game's picture, as
-  // before ZOOM.
+  // the step, at SIZE's scale. Any other frontend (RetroArch) keeps the HUD in the game's picture, as before ZOOM.
   if (scale == 1 && hudHost) {
     hudOx = hudOy = 0;
     hudTW = CW;
     hudTH = CH;
-    hudPct = small ? 50 : 100;
+    hudPct = pct;
     hudScale = 1;
     // A frontend that draws it takes the picture at its own size instead: the same quarters, each drawn once to the
-    // window, so SMALL and NORMAL are as sharp at 1x as they are at 2x (the spread below halves them at 1x).
+    // window, so every SIZE is as sharp at 1x as it is at 2x (the spread below scales them at 1x).
     hudNativeOn = hudShown;
     hudNativePct = hudPct;
     return;
@@ -1225,11 +1224,13 @@ static int want_zoom(void) {
   if (settings.aspect == PD_ASPECT_ORIGINAL || !wideSupported)
     return 0;
   int level = settings.zoom + (settings.aspect == PD_ASPECT_ZOOM_OUT ? 1 : 0); // a file from before the list: its one step
-  // AUTO ZOOM IN keeps the step on the plain overworld and steps in everywhere else (a text box, a battle, a menu, a
-  // fade, a title), or they'd sit small in the middle of the window. Off, the step is the player's: it stays on every
-  // screen. (The DS cores report their field text boxes as the field, so a DS sign keeps the step either way.)
+  // AUTO ZOOM IN pulls a field text box (a conversation, a sign) in to 1x, so the words are never tiny. Off, the
+  // player's step stays through it. Battles, the title and menu screens always pull in, whatever the setting: a zoomed
+  // out menu would sit small in the middle of the window. A fade or a picture over the field holds the step.
   const int scene = pk_wide_scene();
-  if (!rewinding && settings.autoZoom && scene != PK_WIDE_SCENE_FIELD)
+  const bool close = scene == PK_WIDE_SCENE_BATTLE_START || scene == PK_WIDE_SCENE_OFF ||
+                     scene == PK_WIDE_SCENE_MENU || (scene == PK_WIDE_SCENE_TEXT && settings.autoZoom);
+  if (!rewinding && close)
     level = 0;
   int n = zoom_steps();
   if (level >= n)

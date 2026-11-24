@@ -153,6 +153,13 @@ const char* pd_hud_part_name(int part);
 const char* pd_hud_layout_name(int layout);
 const char* pd_hud_look_name(int look);
 const char* pd_hud_size_name(int size);
+/* A host that draws the HUD scales its 256x192 picture by this percentage: 100 draws the whole box; less draws its four
+ * quarters at the corners, each pct/2 percent of the box. SMALL and NORMAL use the mini HUD, half the full one's size:
+ * 50 / 70 make their quarters 1/4 and 7/20 of the box. LARGE keeps the full HUD in the same quarters at 60, its art
+ * twice the mini's, so about 1.7x NORMAL: big, without the whole picture covering the screen. */
+static inline int pd_hud_pct(int size) {
+    return size == PD_HUD_SMALL ? 50 : size == PD_HUD_NORMAL ? 70 : 60;
+}
 
 enum pd_action {
     PD_ACTION_NONE,
