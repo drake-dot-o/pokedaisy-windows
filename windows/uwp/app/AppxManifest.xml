@@ -4,7 +4,7 @@
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/restrictedcapabilities"
   IgnorableNamespaces="uap rescap">
-  <Identity Name="PokeDaisy.UwpHost" Publisher="CN=PokeDaisyHost" Version="1.0.0.5" ProcessorArchitecture="x64" />
+  <Identity Name="PokeDaisy.UwpHost" Publisher="CN=PokeDaisyHost" Version="1.0.0.6" ProcessorArchitecture="x64" />
   <Properties>
     <DisplayName>PokeDaisy UWP</DisplayName>
     <PublisherDisplayName>PokeDaisy</PublisherDisplayName>

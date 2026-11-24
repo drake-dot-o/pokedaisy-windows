@@ -2919,6 +2919,11 @@ int main(int argc, char **argv) {
   // A window manager can give another window the focus over the game (plorpOS's in-game menu on the GKD): the
   // controller has to keep reaching the host then.
   SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+#ifdef PD_UWP
+  // Xbox reports the controller's B button as a system Back request. SDL only marks it handled when this hint is set;
+  // otherwise the shell closes the app to the dashboard. The controller event still reaches the game separately.
+  SDL_SetHint(SDL_HINT_WINRT_HANDLE_BACK_BUTTON, "1");
+#endif
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER)) {
     fprintf(stderr, "SDL: %s\n", SDL_GetError());
     return 1;

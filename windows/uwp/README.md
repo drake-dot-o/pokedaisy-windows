@@ -59,7 +59,7 @@ Package identity: `PokeDaisy.UwpHost_5wqf515wt4wy6`, publisher
 LocalState is keyed by.
 
 An update needs a higher `Version` in `windows/uwp/app/AppxManifest.xml` than
-the installed package (`1.0.0.5` now). Registering the new layout updates the
+the installed package (`1.0.0.6` now). Registering the new layout updates the
 package in place and keeps LocalState.
 
 Game data:
