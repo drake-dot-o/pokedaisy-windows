@@ -177,7 +177,7 @@ An early preview, for a 3DS with custom firmware and the Homebrew Launcher:
 
 Windows 10 or 11, on a 64-bit PC, in the betas for now: `PokeDaisy-<version>-windows-x86_64.zip` on the
 [releases page](https://github.com/lidor30/pokedaisy/releases). Extract it and start `PokeDaisy.exe`. Guide:
-[Install on Windows](docs/manual/windows-install.md).
+[Install on Windows](docs/manual/windows-install.md). On an Xbox in Dev Mode, the UWP host in [`windows/uwp/`](windows/uwp/README.md) builds the same app as a package. Guide: [Install on Xbox](docs/manual/xbox-install.md).
 
 ### iOS
 

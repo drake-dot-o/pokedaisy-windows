@@ -4222,6 +4222,14 @@ RESUME GAMES-off launch use that same fresh marker; same-process sleep still ret
 The iPad's APP group exposes RESUME GAMES. Explicit close/restart first pauses and captures;
 failure resumes the running core and leaves the UI open rather than discarding the unsaved moment.
 
+## Windows UWP host (`windows/uwp/`)
+
+The Windows SDL host also builds as a UWP app for Xbox Dev Mode. It is the same `linux/main.c`, `linux/library.c` and `3ds/core` companion as the desktop host, compiled with MSVC. `PD_UWP` switches the data root to the package's LocalState, loads the cores with `LoadPackagedLibrary`, and finds the install folder through `pd_install_dir`. The package is not a Microsoft Store package; it is sideloaded in Dev Mode. The player steps are [Install on Xbox](manual/xbox-install.md).
+
+`windows/uwp/build.bat` builds the three core DLLs from `build/PokeDaisy-windows-x64`, SDL2's UWP target and the host, then packs `build/uwp/PokeDaisyUwpHost.appx`. It needs Visual Studio 2022, Windows SDK 10.0.22621, MSYS2 MinGW gcc for `pd_guide_gen.c`, and SDL2 2.30.5 built for UWP (`windows/uwp/sdl2/README.md`; `gen_sdl2_uwp.py` builds it with `cl.exe` when the Visual Studio UWP workload is absent). `windows/uwp/README.md` has the install and signing steps.
+
+The package identity is `PokeDaisy.UwpHost_5wqf515wt4wy6`, publisher `CN=PokeDaisyHost`, x64. A build keeps the same identity and certificate so LocalState (`roms`, `saves`, `states`, `host.ini`) survives an update. Nothing under `build/` is committed; the host's own sources and manifest are in `windows/uwp/`.
+
 ## ScreenScraper and the dual-screen launcher
 
 Game media (box art, screenshots, title screens, wheel logos, fanart, cartridges, videos and the facts: synopsis,

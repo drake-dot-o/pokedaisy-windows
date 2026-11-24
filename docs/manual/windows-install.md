@@ -14,6 +14,8 @@ first game.
 > The Windows version is new and in the betas only for now. Its menus are in English, and it has been tried on few
 > PCs yet. If something goes wrong, [tell us](https://pokedaisy.com/feedback/#bug) which file and which PC you used.
 
+On an Xbox in Dev Mode, see [Install on Xbox](xbox-install.md).
+
 ## What you need
 
 - **A 64-bit Windows PC.** Windows 10 or 11.
