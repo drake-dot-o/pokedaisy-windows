@@ -66,7 +66,7 @@ static char savesDir[PATH_MAX], exeDir[PATH_MAX];
 static char message[128];
 static unsigned messageUntil;
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(PD_UWP) // a packaged app's icon is its manifest's
 /* The icon the executable carries (windows/pokedaisy.rc): the title bar, the taskbar and Alt-Tab take it here, so the
  * window does not depend on SDL picking the exe's own. */
 static void set_window_icon(SDL_Window *win) {
@@ -370,8 +370,12 @@ static void script_keys(void) {
     for (char *t = strtok_r(buf, ",", &save); t && scriptN < 256; t = strtok_r(NULL, ",", &save)) {
       char name[16];
       unsigned at, hold = 2;
-      if (sscanf(t, "%u:%15[^:]:%u", &at, name, &hold) >= 2 && key_named(name) >= 0)
-        script[scriptN++] = (typeof(script[0])){at, hold, key_named(name)};
+      if (sscanf(t, "%u:%15[^:]:%u", &at, name, &hold) >= 2 && key_named(name) >= 0) {
+        script[scriptN].at = at;
+        script[scriptN].hold = hold;
+        script[scriptN].key = key_named(name);
+        scriptN++;
+      }
     }
   }
   for (int i = 0; i < scriptN; i++) {
@@ -396,8 +400,12 @@ static void script_rawkeys(void) {
     for (char *t = strtok_r(buf, ",", &save); t && rawscriptN < 16; t = strtok_r(NULL, ",", &save)) {
       unsigned at, hold = 2;
       int code;
-      if (sscanf(t, "%u:%d:%u", &at, &code, &hold) >= 2)
-        rawscript[rawscriptN++] = (typeof(rawscript[0])){at, hold, code};
+      if (sscanf(t, "%u:%d:%u", &at, &code, &hold) >= 2) {
+        rawscript[rawscriptN].at = at;
+        rawscript[rawscriptN].hold = hold;
+        rawscript[rawscriptN].key = code;
+        rawscriptN++;
+      }
     }
   }
   for (int i = 0; i < rawscriptN; i++) {
@@ -512,8 +520,14 @@ static void script_mouse(void) {
       unsigned at;
       int x, y;
       char c = 0;
-      if (sscanf(t, "%u:%d:%d:%c", &at, &x, &y, &c) >= 3)
-        mscript[mscriptN] = (typeof(mscript[0])){at, x, y, c == 'd' ? -1 : c == 'u' ? 1 : 0, c == 'c'}, mscriptN++;
+      if (sscanf(t, "%u:%d:%d:%c", &at, &x, &y, &c) >= 3) {
+        mscript[mscriptN].at = at;
+        mscript[mscriptN].x = x;
+        mscript[mscriptN].y = y;
+        mscript[mscriptN].wheel = c == 'd' ? -1 : c == 'u' ? 1 : 0;
+        mscript[mscriptN].click = c == 'c';
+        mscriptN++;
+      }
     }
   }
   for (int i = 0; i < mscriptN; i++)
@@ -543,8 +557,12 @@ static void script_resize(void) {
     for (char *t = strtok_r(buf, ",", &save); t && rscriptN < 8; t = strtok_r(NULL, ",", &save)) {
       unsigned at;
       int w, h;
-      if (sscanf(t, "%u:%dx%d", &at, &w, &h) == 3 && w > 0 && h > 0)
-        rscript[rscriptN++] = (typeof(rscript[0])){at, w, h};
+      if (sscanf(t, "%u:%dx%d", &at, &w, &h) == 3 && w > 0 && h > 0) {
+        rscript[rscriptN].at = at;
+        rscript[rscriptN].w = w;
+        rscript[rscriptN].h = h;
+        rscriptN++;
+      }
     }
   }
   for (int i = 0; i < rscriptN; i++)
@@ -2438,7 +2456,17 @@ static int cmp(const void *a, const void *b) {
 }
 static void exe_dir(const char *argv0) {
   char p[PATH_MAX];
-#ifdef _WIN32
+#if defined(PD_UWP)
+  // A packaged app's own folder: the package's install folder, which holds the exe and the cores (the loader only
+  // loads modules the package has). It is the folder itself, not a file's path.
+  long n = pd_install_dir(p, sizeof p);
+  if (n <= 0)
+    snprintf(p, sizeof p, ".");
+  for (char *c = p; *c; c++) // one separator throughout: base_name and the path joins below use '/'
+    if (*c == '\\')
+      *c = '/';
+  snprintf(exeDir, sizeof exeDir, "%s", p);
+#elif defined(_WIN32)
   long n = pd_exe_path(p, sizeof p); // GetModuleFileNameA: Windows has no /proc/self/exe
 #else
   ssize_t n = readlink("/proc/self/exe", p, sizeof p - 1);
@@ -2460,6 +2488,25 @@ static void exe_dir(const char *argv0) {
   snprintf(exeDir, sizeof exeDir, "%s", p);
 }
 int main(int argc, char **argv) {
+#ifdef PD_UWP
+  /* A packaged app has no console and can write nothing beside its exe: DATA (roms, saves, states, host.ini) lives in
+   * the app's local folder, and stderr, where the host says what it is doing, goes to a file there. The cores stay in
+   * the package, which exe_dir names. */
+  static char uwpRoot[PATH_MAX], uwpLog[PATH_MAX];
+  char *pref = SDL_GetPrefPath("PokeDaisy", "UwpHost");
+  snprintf(uwpRoot, sizeof uwpRoot, "%s", pref ? pref : ".");
+  SDL_free(pref);
+  for (size_t len = strlen(uwpRoot); len > 1 && (uwpRoot[len - 1] == '/' || uwpRoot[len - 1] == '\\'); len--)
+    uwpRoot[len - 1] = 0;
+  for (char *c = uwpRoot; *c; c++) // one separator throughout, as exe_dir leaves them
+    if (*c == '\\')
+      *c = '/';
+  root = uwpRoot;
+  snprintf(uwpLog, sizeof uwpLog, "%s/host.log", root);
+  freopen(uwpLog, "w", stderr);
+  fprintf(stderr, "PokeDaisy UWP\nData: %s\n", root);
+  fflush(stderr);
+#endif
   const char *rom = NULL, *shot = NULL;
   int frames = 0;
   for (int i = 1; i < argc; i++) {
@@ -2516,7 +2563,7 @@ int main(int argc, char **argv) {
   window = SDL_CreateWindow(PD_HOST_NAME, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                             fullscreen ? display.w : winW, fullscreen ? display.h : winH,
                             fullscreen ? SDL_WINDOW_FULLSCREEN : SDL_WINDOW_RESIZABLE);
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(PD_UWP)
   set_window_icon(window);
 #endif
   // Presents wait for the refresh (the pacing, above); a driver without it gets the timer.
@@ -2551,17 +2598,23 @@ int main(int argc, char **argv) {
   if (rom)
     run_game(rom, frames, shot, false);
   else {
-    /* DATA/roms, then the folders POCKET_ROM_DIRS names (colon-separated: the PortMaster launcher passes the
-     * firmware's own gba / gb / gbc / nds folders), by file name. Those hold every other game too, so only their
-     * Pokemon games are listed (pokemon_rom); DATA/roms lists whatever was put there. */
+    /* DATA/roms, then the folders POCKET_ROM_DIRS names (colon-separated on Linux: the PortMaster launcher passes
+     * the firmware's own gba / gb / gbc / nds folders; a Windows drive letter owns the colon, so there a semicolon
+     * separates them), by file name. Those hold every other game too, so only their Pokemon games are listed
+     * (pokemon_rom); DATA/roms lists whatever was put there. */
     static char *paths[1024];
     int count = 0;
     char dirs[4096];
-    snprintf(dirs, sizeof dirs, "%s/roms%s%s", root, getenv("POCKET_ROM_DIRS") ? ":" : "",
+#ifdef _WIN32
+    const char *dirSep = ";";
+#else
+    const char *dirSep = ":";
+#endif
+    snprintf(dirs, sizeof dirs, "%s/roms%s%s", root, getenv("POCKET_ROM_DIRS") ? dirSep : "",
              getenv("POCKET_ROM_DIRS") ? getenv("POCKET_ROM_DIRS") : "");
     char *save = NULL;
     bool firmware = false;
-    for (char *dir = strtok_r(dirs, ":", &save); dir; dir = strtok_r(NULL, ":", &save), firmware = true) {
+    for (char *dir = strtok_r(dirs, dirSep, &save); dir; dir = strtok_r(NULL, dirSep, &save), firmware = true) {
       DIR *d = opendir(dir);
       struct dirent *e;
       while (d && (e = readdir(d)) && count < 1024) {
