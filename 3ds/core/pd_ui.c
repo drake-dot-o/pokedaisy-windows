@@ -92,11 +92,15 @@ int ui_bar_count(const struct pd_ui* ui) {
     return n;
 }
 
+// TAB BAR's rows: only the tabs this game has (GitHub #1346: CHEEVOS, CARD and NUZLOCKE were offered on games without
+// them and never showed). The bits stay per tab, so a tab picked in another game is still on there.
 int ui_configurable_tabs(const struct pd_ui* ui, enum pd_tab out[UI_BAR_CHOICES]) {
     int n = 0;
     for (int i = 0; i < UI_BAR_CHOICES; i++) {
         const enum pd_tab tab = UI_BAR_CHOICE[i];
-        if (!ui->availableTabs || (ui->availableTabs & (1u << tab))) out[n++] = tab;
+        if (ui->drawnGame || ui->content ? ui_tab_available(ui, ui->drawnGame, tab)
+                                         : !ui->availableTabs || (ui->availableTabs & (1u << tab)))
+            out[n++] = tab;
     }
     return n;
 }
@@ -718,7 +722,7 @@ static void act(struct pd_ui* ui, int id) {
         };
         // With ZOOM's steps (a host that has them), ASPECT is the app's EXPAND on / off: two values, so it
         // flips in place. A host without them keeps the pick-list.
-        if (id == HIT_SETTING + SETTING_ASPECT && ui->zoomCount > 0) {
+        if (id == HIT_SETTING + SETTING_ASPECT && ui->zoomCount > 1) {
             ui->settings->aspect = ui->settings->aspect == PD_ASPECT_ORIGINAL ? PD_ASPECT_EXPAND : PD_ASPECT_ORIGINAL;
             ui->action = PD_ACTION_SETTINGS_CHANGED;
         } else {
@@ -939,17 +943,6 @@ void pd_ui_focus_move(struct pd_ui* ui, int direction) {
 
 void pd_ui_focus_press(struct pd_ui* ui) {
     if (focus_index(ui, ui->focusId) >= 0) act(ui, ui->focusId);
-}
-
-bool pd_ui_tap(struct pd_ui* ui, int x, int y) {
-    for (int i = ui->hitCount - 1; i >= 0; i--) {
-        const struct pd_hit* h = &ui->hits[i];
-        if (x < h->x || y < h->y || x >= h->x + h->w || y >= h->y + h->h) continue;
-        ui->focusId = h->id;
-        act(ui, h->id);
-        return true;
-    }
-    return false;
 }
 
 bool pd_ui_back(struct pd_ui* ui) {
