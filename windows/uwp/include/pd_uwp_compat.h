@@ -14,6 +14,10 @@
 #include <string.h>
 #include <time.h>
 
+/* The host's files, through the ...FromApp calls a packaged app needs for a folder outside the package. This also
+ * supplies the fopen / stat / access / unlink / rename / mkdir macros for every host source. */
+#include "pd_uwp_fs.h"
+
 #ifndef PATH_MAX
 #define PATH_MAX 260
 #endif

@@ -58,6 +58,10 @@ Package identity: `PokeDaisy.UwpHost_5wqf515wt4wy6`, publisher
 `CN=PokeDaisyHost`, x64. Keep both stable: the package family name is what
 LocalState is keyed by.
 
+An update needs a higher `Version` in `windows/uwp/app/AppxManifest.xml` than
+the installed package (`1.0.0.5` now). Registering the new layout updates the
+package in place and keeps LocalState.
+
 Game data:
 
 ```
@@ -66,6 +70,15 @@ LocalAppData\PokeDaisy.UwpHost_5wqf515wt4wy6\LocalState\PokeDaisy\UwpHost
 
 `roms` holds the games, `saves` the battery saves, `states` the states and
 `host.ini` the host settings. Use the Device Portal's File Explorer on an Xbox.
+
+The game list's SETTINGS page has **ROMS FOLDER** and **SAVES FOLDER** under
+**FOLDERS** (Windows and Xbox). The folder browser lists drives and folders, so
+a game collection or its saves can live on a USB drive instead. The chosen
+paths are saved as `rom_dir=` and `save_dir=` in `host.ini`; save states go in a
+`states` folder beside the save folder. The host uses the `...FromApp` file calls for those
+paths, so the package needs `broadFileSystemAccess` in its manifest (the build
+adds it). On a PC, the first start may ask for file system permission: allow it
+under Windows Settings, Privacy and security, File system.
 
 ## Signing
 
@@ -96,7 +109,8 @@ saves.
 - The host registers on Windows. It has not been run on an Xbox here. No console
   was available, so input, rendering, audio and core loading are untested on
   hardware.
-- The UWP data root is LocalState; the desktop Windows host's data stays beside
+- The UWP data root is LocalState, but the ROM and save folders can point
+  elsewhere (SETTINGS > FOLDERS). The desktop Windows host's data stays beside
   the executable.
 - The host starts the same cores; no Microsoft Store certification is needed
   for Dev Mode sideloading.

@@ -1,9 +1,9 @@
 ---
 title: Install on Windows
-summary: Download PokeDaisy for Windows, start it, add your games and bring your saves from another emulator.
+summary: Download PokeDaisy for Windows, start it, add your games, choose where they and your saves live, and bring your saves from another emulator.
 section: start
 order: 86
-keywords: [windows, pc, windows 10, windows 11, exe, dll, zip, extract, smartscreen, windows protected your pc, run anyway, sdl2, desktop]
+keywords: [windows, pc, windows 10, windows 11, exe, dll, zip, extract, smartscreen, windows protected your pc, run anyway, sdl2, desktop, rom folder, save folder, external drive, usb drive]
 ---
 
 PokeDaisy also runs on a Windows PC: the same program as the [Linux version](linux.md), with the same companion, HUD,
@@ -36,7 +36,8 @@ The first time, Windows may say **Windows protected your PC**, because the progr
 then **Run anyway**.
 
 The game list opens: pick a game with the arrow keys or a controller's D-pad and press A (Z on a keyboard), or click
-it. PokeDaisy keeps `roms`, `saves`, `states` and its settings in its own folder, next to `PokeDaisy.exe`.
+it. By default PokeDaisy keeps `roms`, `saves`, `states` and its settings in its own folder, next to `PokeDaisy.exe`.
+You can choose other folders in `SETTINGS`: see [Choose folders on another drive](#choose-folders-on-another-drive).
 
 The folder holds the program, its three cores and SDL2:
 
@@ -50,13 +51,39 @@ The controls, the menu and the companion work as on Linux: see [Linux, Steam Dec
 
 ## Bring your saves
 
-A game's save is in the `saves` folder next to `roms`, named after the whole ROM file name plus `.sav`: for
-`FireRed.gba` that's `saves\FireRed.gba.sav`. A save from another emulator works when you copy it there under that
-name, a RetroArch `.srm` included. A save named after the ROM without its extension works too: `saves\FireRed.sav` is
-used for `FireRed.gba` when `saves\FireRed.gba.sav` isn't there. Keep a copy of your old save somewhere else first.
+A game's save is in the `saves` folder next to `roms`, or in the save folder you chose, named after the whole ROM file
+name plus `.sav`: for `FireRed.gba` that's `saves\FireRed.gba.sav`. A save from another emulator works when you copy
+it there under that name, a RetroArch `.srm` included. A save named after the ROM without its extension works too:
+`saves\FireRed.sav` is used for `FireRed.gba` when `saves\FireRed.gba.sav` isn't there. Keep a copy of your old save
+somewhere else first.
 
-Before a game opens, PokeDaisy copies its save to `saves\pokedaisy-backups` and keeps the newest 10 copies, so an older
-one is there if you need it. Save states from another emulator don't load.
+Before a game opens, PokeDaisy copies its save to `pokedaisy-backups` in the save folder and keeps the newest 10 copies,
+so an older one is there if you need it. Save states from another emulator don't load.
+
+## Choose folders on another drive
+
+You can keep your games or their saves on another drive, including a USB drive, and leave the rest in PokeDaisy's own
+folder.
+
+1. Open `SETTINGS` on the game list.
+2. Choose `ROMS FOLDER` or `SAVES FOLDER` under `FOLDERS`.
+3. Pick a drive such as `DRIVE E:`, then open the folders you want. Choose `USE THIS FOLDER` when you are in the right
+   one.
+
+A (Z on a keyboard) opens the selected folder. B (X on a keyboard) goes up one folder. The `..` row is in every
+folder, including the top of a drive; there it opens the list of drives. B on the drive list closes the browser. You
+can also click a folder, and the mouse wheel scrolls the folder list.
+
+The `DEFAULT` row above `..` puts this setting back to PokeDaisy's own `roms` or `saves` folder.
+The `USE THIS FOLDER`, `DEFAULT` and `..` rows stay at the top while the folder list scrolls.
+
+The game list reads the ROM folder again as soon as you choose it. Save states go in a `states` folder beside the save
+folder, so they stay on the same drive. The two folders are separate: you can keep games on the drive and saves in
+PokeDaisy's folder, or both on the drive.
+
+Changing a folder does not move or delete the games and saves already in the old one. Copy them yourself if you want
+them on the new drive. If the drive is not connected, the app cannot read the folder; connect it and choose the folder
+again from `SETTINGS`.
 
 ## Updating
 
@@ -69,10 +96,10 @@ they stay as they are.
   `PokeDaisy.exe` from there.
 - **Nothing opens, or it closes at once:** extract the zip to a folder you can write to (not `Program Files`), so
   PokeDaisy can make its `roms` and `saves` folders.
-- **A game isn't listed:** it has to be right in `roms` (not in a folder inside it), unzipped, and end in `.gba`,
-  `.gb`, `.gbc` or `.nds`.
+- **A game isn't listed:** it has to be right in the ROM folder (normally `roms`, or the folder you chose), not in a
+  folder inside it, unzipped, and end in `.gba`, `.gb`, `.gbc` or `.nds`.
 - **My save didn't load:** the save needs the ROM's whole file name with `.sav` added, or the ROM's name without its
-  extension, in `saves`. Check `saves\pokedaisy-backups` for an older copy.
+  extension, in the save folder. Check `pokedaisy-backups` there for an older copy.
 - **The controller does nothing:** SDL doesn't know it yet. Put a `gamecontrollerdb.txt` with its mapping in the
   folder, next to `roms`.
 

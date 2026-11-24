@@ -2,8 +2,9 @@
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
-  IgnorableNamespaces="uap">
-  <Identity Name="PokeDaisy.UwpHost" Publisher="CN=PokeDaisyHost" Version="1.0.0.0" ProcessorArchitecture="x64" />
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+  <Identity Name="PokeDaisy.UwpHost" Publisher="CN=PokeDaisyHost" Version="1.0.0.5" ProcessorArchitecture="x64" />
   <Properties>
     <DisplayName>PokeDaisy UWP</DisplayName>
     <PublisherDisplayName>PokeDaisy</PublisherDisplayName>
@@ -16,6 +17,13 @@
   <Resources>
     <Resource Language="en-us" />
   </Resources>
+  <Capabilities>
+    <!-- A ROM folder or save folder on a USB drive: the host reads it with the ...FromApp file calls, and this capability
+         lets the package reach the user's files. On Xbox Dev Mode the ...FromApp calls work; FolderPicker does not, which
+         is why the host has its own folder browser. runFullTrust is what Xbox ports that read a folder this way ship. -->
+    <rescap:Capability Name="broadFileSystemAccess" />
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
   <Applications>
     <Application Id="App" Executable="PokeDaisy.exe" EntryPoint="Windows.FrameWork.Application">
       <uap:VisualElements

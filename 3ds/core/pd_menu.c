@@ -23,13 +23,25 @@ void pd_menu_init(struct pd_menu* m, const char* title, const char* const* items
     m->count = count;
     m->selected = 0;
     m->scroll = 0;
+    m->fixed = 0;
     m->touching = false;
     m->pressed = -1;
 }
 
+static int fixed_rows(const struct pd_menu* m, int rows) {
+    int fixed = m->fixed;
+    if (fixed > rows) fixed = rows;
+    if (fixed > m->count) fixed = m->count;
+    return fixed;
+}
+
 static void keep_visible(struct pd_menu* m, int rows) {
-    if (m->selected < m->scroll) m->scroll = m->selected;
-    if (m->selected >= m->scroll + rows) m->scroll = m->selected - rows + 1;
+    int fixed = fixed_rows(m, rows);
+    int body = rows - fixed;
+    int pos = m->selected - fixed;
+    if (pos < 0 || body <= 0) return;
+    if (pos < m->scroll) m->scroll = pos;
+    if (pos >= m->scroll + body) m->scroll = pos - body + 1;
     if (m->scroll < 0) m->scroll = 0;
 }
 
@@ -42,6 +54,8 @@ void pd_menu_draw(struct pd_menu* m, struct pd_canvas* c) {
     pd_list_box(c, MARGIN, LIST_Y, w, c->h - LIST_Y - MARGIN);
     int rows = visible_rows(c);
     keep_visible(m, rows);
+    int fixed = fixed_rows(m, rows);
+    int body = rows - fixed;
     int x = MARGIN + LIST_FRAME, iw = w - 2 * LIST_FRAME;
     int y = LIST_Y + LIST_FRAME + 2;
     if (m->count == 0) {
@@ -50,19 +64,25 @@ void pd_menu_draw(struct pd_menu* m, struct pd_canvas* c) {
         pd_text(c, x + 6, y + 2 * ROW_H, "sdmc:/pokedaisy/roms/", PD_VALUE, PD_VALUE_SHADOW);
         return;
     }
-    for (int r = 0; r < rows && m->scroll + r < m->count; r++) {
-        int i = m->scroll + r;
+    for (int i = 0; i < m->count; i++) {
+        int r = i;
+        if (i >= fixed) {
+            if (i - fixed < m->scroll) continue;
+            r = fixed + i - fixed - m->scroll;
+        }
+        if (r >= rows) break;
         bool cursor = i == m->selected || i == m->pressed;
         if (cursor) pd_fill(c, x, y + r * ROW_H, iw, ROW_H, PD_ROW_SELECTED);
         pd_text_fit(c, x + 6, pd_text_y(y + r * ROW_H, ROW_H), iw - 12, m->items[i],
                     cursor ? PD_VALUE : PD_LABEL, cursor ? PD_VALUE_SHADOW : PD_LABEL_SHADOW);
     }
     // A scroll bar when the list runs past the window.
-    if (m->count > rows) {
-        int track = rows * ROW_H;
-        int th = track * rows / m->count;
-        int ty = track * m->scroll / m->count;
-        pd_fill(c, x + iw - 3, y + ty, 2, th < 6 ? 6 : th, PD_MUTED);
+    if (m->count > rows && body > 0) {
+        int track = body * ROW_H;
+        int total = m->count - fixed;
+        int th = track * body / total;
+        int ty = track * m->scroll / total;
+        pd_fill(c, x + iw - 3, y + fixed * ROW_H + ty, 2, th < 6 ? 6 : th, PD_MUTED);
     }
 }
 
@@ -74,9 +94,12 @@ void pd_menu_move(struct pd_menu* m, int delta) {
 static int row_at(const struct pd_menu* m, int x, int y, int rows, int w) {
     int top = LIST_Y + LIST_FRAME + 2;
     if (x < MARGIN + LIST_FRAME || x >= MARGIN + w - LIST_FRAME || y < top) return -1;
+    int fixed = fixed_rows(m, rows);
     int r = (y - top) / ROW_H;
-    if (r >= rows || m->scroll + r >= m->count) return -1;
-    return m->scroll + r;
+    if (r >= rows) return -1;
+    if (r < fixed) return r < m->count ? r : -1;
+    int i = fixed + m->scroll + r - fixed;
+    return i < m->count ? i : -1;
 }
 
 int pd_menu_touch(struct pd_menu* m, int x, int y, bool down) {

@@ -13,6 +13,7 @@ struct pd_menu {
     int count;
     int selected;
     int scroll;
+    int fixed; // rows at the top that stay put while the rest scrolls
     bool touching;
     int pressed; // row the stylus went down on, -1 = none
     bool overlay; // just the windows, over whatever is behind (a host's menu over the game)

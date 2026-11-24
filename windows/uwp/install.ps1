@@ -11,7 +11,7 @@ if ($existing -and $existing.InstallLocation) {
     $current = $existing.InstallLocation.TrimEnd('\')
     $wanted = (Resolve-Path $layout).Path.TrimEnd('\')
     if ($current -ne $wanted) {
-        Write-Warning "PokeDaisy is already registered from $current. This script does not remove packages, so it will not move the install. Rebuild that layout, or install a signed package to update it. LocalState is untouched."
+        Write-Host "PokeDaisy is registered from $current. A build with a higher Version in its manifest updates it to $wanted and keeps LocalState; bump Version in the manifest to install a newer build."
     }
 }
 

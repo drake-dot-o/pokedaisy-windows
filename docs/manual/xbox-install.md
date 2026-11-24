@@ -3,7 +3,7 @@ title: Install on Xbox
 summary: Play PokeDaisy on an Xbox in Dev Mode with your own games and saves.
 section: start
 order: 87
-keywords: [xbox, series x, series s, dev mode, uwp, sideload, appx, certificate, device portal]
+keywords: [xbox, series x, series s, dev mode, uwp, sideload, appx, certificate, device portal, usb drive, external drive, rom folder, save folder]
 ---
 
 PokeDaisy runs on an Xbox in Dev Mode. The game fills the TV and the companion sits beside it, as on Windows. The Xbox build is a preview: it is not in the Microsoft Store, and you install it yourself.
@@ -38,7 +38,20 @@ On the Xbox, open the Device Portal's **File Explorer** and go to:
 
 Put games in `roms` and battery saves in `saves`. Use the whole ROM file name plus `.sav` for a save, or the ROM name without its extension. Save states go in `states`. The library scans `roms` when it starts.
 
-The host keeps its settings in `host.ini` in that folder. The desktop Windows build keeps its data beside the executable instead.
+The host keeps its settings in `host.ini` in that folder. The desktop Windows build starts with its data beside the executable and can also choose folders from `SETTINGS` > `FOLDERS`.
+
+## Choose a folder on another drive
+
+An Xbox fills its internal storage quickly, and a USB drive is the easy place for a large game collection. You can keep games and saves on a drive and leave the app's own folder for settings.
+
+1. Plug the drive into the Xbox. The browser shows the drives the app can read; if yours does not appear, try a plain USB drive formatted on a PC with exFAT or NTFS. A drive the Xbox formatted for games may keep its folders away from apps.
+2. Open PokeDaisy and stay on the game list.
+3. Open **SETTINGS**, then choose **ROMS FOLDER** or **SAVES FOLDER** under **FOLDERS**.
+4. Pick the drive (a row such as **DRIVE E:**), then open the folders you want. Choose **USE THIS FOLDER** when you are in the right one. **B** goes up a folder. The `..` row is in every folder, including the top of a drive; there it opens the list of drives. **B** on the drive list closes the browser. The `DEFAULT` row above `..` puts the setting back to PokeDaisy's own folder. The top rows stay put while the folder list scrolls.
+
+The game list reads the ROM folder again as soon as you choose it. Save states go in a `states` folder beside the save folder, so they stay on the same drive. The two folders are separate: you can keep games on the drive and saves in the app's folder, or both on the drive.
+
+If the drive is not connected, the app cannot read the folder. Connect it and choose the folder again from **SETTINGS**. Changing a folder does not move or delete the games and saves already in the old one; copy them yourself if you want them on the new drive.
 
 ## Updating
 

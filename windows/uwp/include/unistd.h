@@ -25,8 +25,12 @@
 typedef intptr_t ssize_t;
 #endif
 
+/* pd_uwp_fs.h gives access and unlink the ...FromApp calls when it is in (the UWP build always has it): a CRT _access
+ * on an outside folder would say the ROM is gone. */
+#ifndef PD_UWP_FS_H
 #define access _access
 #define unlink _unlink
+#endif
 #define rmdir _rmdir
 #define getcwd _getcwd
 #define chdir _chdir

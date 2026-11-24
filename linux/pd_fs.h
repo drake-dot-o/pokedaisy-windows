@@ -7,7 +7,16 @@
 #include <string.h>
 #include <strings.h>
 
-#ifdef _WIN32
+#ifdef PD_UWP
+#include "pd_uwp_fs.h"
+#define fsync(fd) _commit(fd) // a save on its way to the drive: flush the handle
+static inline int pd_mkdir(const char *path) {
+  return pd_uwp_mkdir(path);
+}
+static inline int pd_rename(const char *from, const char *to) {
+  return pd_uwp_rename(from, to);
+}
+#elif defined(_WIN32)
 #include <direct.h>
 #include <io.h>
 #define fsync(fd) _commit(fd) // a save on its way to the card: Windows flushes a file handle with _commit
