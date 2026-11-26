@@ -26,6 +26,26 @@ endif()
 find_path(SDL2_INCLUDE_DIR SDL.h PATH_SUFFIXES SDL2 REQUIRED)
 find_library(SDL2_LIBRARY NAMES SDL2 REQUIRED)
 
+# RetroAchievements: rcheevos' rc_client (the same vendored v12.5 the app uses).
+get_filename_component(RCHEEVOS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/rcheevos ABSOLUTE)
+if(NOT EXISTS ${RCHEEVOS_DIR}/include/rc_client.h)
+  message(FATAL_ERROR "rcheevos submodule missing at ${RCHEEVOS_DIR} - run: git submodule update --init third_party/rcheevos")
+endif()
+file(GLOB RCHEEVOS_SOURCES
+  ${RCHEEVOS_DIR}/src/*.c
+  ${RCHEEVOS_DIR}/src/rapi/*.c
+  ${RCHEEVOS_DIR}/src/rcheevos/*.c
+  ${RCHEEVOS_DIR}/src/rhash/hash.c
+  ${RCHEEVOS_DIR}/src/rhash/hash_rom.c
+  ${RCHEEVOS_DIR}/src/rhash/md5.c)
+list(FILTER RCHEEVOS_SOURCES EXCLUDE REGEX "rc_client_external\\.c$|rc_client_raintegration\\.c$")
+add_library(pd_rcheevos STATIC ${RCHEEVOS_SOURCES})
+target_include_directories(pd_rcheevos PUBLIC
+  ${RCHEEVOS_DIR}/include
+  ../third_party/mgba/src/platform/libretro) # libretro.h for rc_libretro.c
+target_compile_definitions(pd_rcheevos PUBLIC
+  RC_CLIENT_SUPPORTS_HASH RC_HASH_NO_DISC RC_HASH_NO_ENCRYPTED RC_HASH_NO_ZIP)
+
 file(GLOB PD_CORE CONFIGURE_DEPENDS ../3ds/core/*.c)
 # The host's new game library: the app's own list with covers (linux/library.c), and zlib's puff for its PNGs.
 add_library(pd_puff STATIC ../third_party/zlib/contrib/puff/puff.c)
@@ -33,13 +53,15 @@ target_include_directories(pd_puff PUBLIC ../third_party/zlib/contrib/puff)
 # SETTINGS > VERSION: the app's versionName.
 file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/../app/build.gradle.kts POCKET_VERSION_LINE REGEX "versionName = ")
 string(REGEX MATCH "\"[^\"]+\"" POCKET_VERSION "${POCKET_VERSION_LINE}")
-add_executable(PokeDaisy ../linux/main.c ../linux/library.c ../linux/cover_png.c ../3ds/desktop/pd_png.c ${PD_CORE} pokedaisy.rc)
+add_executable(PokeDaisy ../linux/main.c ../linux/library.c ../linux/cover_png.c ../linux/status_bar.c ../3ds/desktop/pd_png.c ra.c ${PD_CORE} pokedaisy.rc)
 target_include_directories(PokeDaisy PRIVATE
   ../3ds/core
   ../third_party/mgba/src/platform/libretro # libretro.h
+  ../third_party/rcheevos/include
+  ../third_party/rcheevos/src
   ${SDL2_INCLUDE_DIR})
 # The host keeps its own main(): SDL's WinMain shim isn't needed, and none of SDL_main applies to it.
-target_compile_definitions(PokeDaisy PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX SDL_MAIN_HANDLED)
+target_compile_definitions(PokeDaisy PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX SDL_MAIN_HANDLED PD_RETROACHIEVEMENTS=1)
 if(POCKET_VERSION)
   target_compile_definitions(PokeDaisy PRIVATE POCKET_VERSION=${POCKET_VERSION})
 endif()
@@ -49,7 +71,7 @@ if(MINGW)
   target_include_directories(PokeDaisy PRIVATE ../windows/include)
   target_compile_options(PokeDaisy PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/../windows/include/pd_win_compat.h)
 endif()
-target_link_libraries(PokeDaisy PRIVATE pd_puff ${SDL2_LIBRARY})
+target_link_libraries(PokeDaisy PRIVATE pd_puff pd_rcheevos ${SDL2_LIBRARY} winhttp)
 set_target_properties(PokeDaisy PROPERTIES WIN32_EXECUTABLE OFF)
 
 # SDL2.dll has to sit beside the game's exe.

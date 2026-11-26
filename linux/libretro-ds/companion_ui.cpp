@@ -580,10 +580,12 @@ void DsCompanionUi::activate_setting(){
   error.clear();
   if(setting==Hud){
     frame.overlay=PD_OVERLAY_HUD;
+    frame.overlayScroll=0;
     choice=0;
   }else if(setting==TabBar || setting==MoreTabs){
     if(game!=DsGame::Unsupported){
       frame.overlay=setting==TabBar?PD_OVERLAY_TAB_BAR:PD_OVERLAY_MORE;
+      frame.overlayScroll=0;
       choice=0;
       if(!pd_ui_tab_menu_count(&frame))frame.overlay=PD_OVERLAY_NONE;
     }

@@ -73,18 +73,29 @@ mkdir "%LAYOUT%\Assets"
 rem The host's own sources, then every part of the companion the library draws with.
 > "%OBJ%\sources.rsp" echo "%ROOT%\linux\main.c"
 >> "%OBJ%\sources.rsp" echo "%ROOT%\linux\library.c"
+>> "%OBJ%\sources.rsp" echo "%ROOT%\linux\status_bar.c"
 >> "%OBJ%\sources.rsp" echo "%ROOT%\linux\cover_png.c"
 >> "%OBJ%\sources.rsp" echo "%ROOT%\3ds\desktop\pd_png.c"
 >> "%OBJ%\sources.rsp" echo "%ROOT%\third_party\zlib\contrib\puff\puff.c"
+>> "%OBJ%\sources.rsp" echo "%HOST%..\ra.c"
 for %%f in ("%ROOT%\3ds\core\*.c") do if not "%%~nxf"=="pd_guide_gen.c" >> "%OBJ%\sources.rsp" echo "%%~f"
+rem RetroAchievements: rcheevos' rc_client, and its libretro memory helper.
+for %%f in ("%ROOT%\third_party\rcheevos\src\*.c") do if not "%%~nxf"=="rc_client_external.c" if not "%%~nxf"=="rc_client_raintegration.c" >> "%OBJ%\sources.rsp" echo "%%~f"
+for %%f in ("%ROOT%\third_party\rcheevos\src\rapi\*.c") do >> "%OBJ%\sources.rsp" echo "%%~f"
+for %%f in ("%ROOT%\third_party\rcheevos\src\rcheevos\*.c") do >> "%OBJ%\sources.rsp" echo "%%~f"
+>> "%OBJ%\sources.rsp" echo "%ROOT%\third_party\rcheevos\src\rhash\hash.c"
+>> "%OBJ%\sources.rsp" echo "%ROOT%\third_party\rcheevos\src\rhash\hash_rom.c"
+>> "%OBJ%\sources.rsp" echo "%ROOT%\third_party\rcheevos\src\rhash\md5.c"
 
 echo === compile host (C, app container) ===
 cl /nologo /c /MD /O2 /W3 /std:c11 /utf-8 ^
- /D_CRT_SECURE_NO_WARNINGS /D_CRT_NONSTDC_NO_DEPRECATE /DNOMINMAX /DPD_UWP ^
+ /D_CRT_SECURE_NO_WARNINGS /D_CRT_NONSTDC_NO_DEPRECATE /DNOMINMAX /DPD_UWP /DPD_RETROACHIEVEMENTS=1 ^
+ /DRC_CLIENT_SUPPORTS_HASH /DRC_HASH_NO_DISC /DRC_HASH_NO_ENCRYPTED /DRC_HASH_NO_ZIP ^
  /DWINAPI_FAMILY=WINAPI_FAMILY_APP /D_WIN32_WINNT=0x0A00 /DUNICODE /D_UNICODE ^
  /FI"%HOST%include\pd_uwp_compat.h" ^
  /I"%HOST%include" /I"%ROOT%\linux" /I"%ROOT%\3ds\core" /I"%ROOT%\3ds\desktop" ^
  /I"%ROOT%\third_party\mgba\src\platform\libretro" /I"%ROOT%\third_party\zlib\contrib\puff" ^
+ /I"%ROOT%\third_party\rcheevos\include" /I"%ROOT%\third_party\rcheevos\src" ^
  /I"%SDL2_UWP_DIR%\SDL2-2.30.5\include" ^
  /Fo"%OBJ%\\" /Fd"%OBJ%\host.pdb" @"%OBJ%\sources.rsp"
 echo HOST_COMPILE_EXIT=%ERRORLEVEL%
@@ -106,11 +117,27 @@ cl /nologo /c /MD /O2 /W3 /EHsc /utf-8 /ZW /D_CRT_SECURE_NO_WARNINGS /DSDL_WINRT
 echo MAIN_COMPILE_EXIT=%ERRORLEVEL%
 if errorlevel 1 goto :done
 
+echo === compile WinRT clipboard ===
+cl /nologo /c /MD /O2 /W3 /EHsc /utf-8 /ZW ^
+ /D_CRT_SECURE_NO_WARNINGS /DNOMINMAX ^
+ /DWINAPI_FAMILY=WINAPI_FAMILY_APP /D_WIN32_WINNT=0x0A00 /DUNICODE /D_UNICODE ^
+ /FU"%WINMD%" "%HOST%clipboard.cpp" /Fo"%OBJ%\clipboard.obj" /Fd"%OBJ%\host.pdb"
+echo CLIPBOARD_COMPILE_EXIT=%ERRORLEVEL%
+if errorlevel 1 goto :done
+
+echo === compile WinRT power ===
+cl /nologo /c /MD /O2 /W3 /EHsc /utf-8 /ZW ^
+ /D_CRT_SECURE_NO_WARNINGS /DNOMINMAX ^
+ /DWINAPI_FAMILY=WINAPI_FAMILY_APP /D_WIN32_WINNT=0x0A00 /DUNICODE /D_UNICODE ^
+ /FU"%WINMD%" "%HOST%power.cpp" /Fo"%OBJ%\power.obj" /Fd"%OBJ%\host.pdb"
+echo POWER_COMPILE_EXIT=%ERRORLEVEL%
+if errorlevel 1 goto :done
+
 echo === link ===
 > "%OBJ%\objects.rsp" echo "%OBJ%\winrtmain.obj"
 for %%f in ("%OBJ%\*.obj") do if not "%%~nxf"=="winrtmain.obj" >> "%OBJ%\objects.rsp" echo "%%~f"
 cl /nologo /MD /Fe"%LAYOUT%\PokeDaisy.exe" @"%OBJ%\objects.rsp" ^
- /link /SUBSYSTEM:WINDOWS /APPCONTAINER /LIBPATH:"%SDL2_UWP_DIR%\bin" SDL2.lib WindowsApp.lib runtimeobject.lib
+ /link /SUBSYSTEM:WINDOWS /APPCONTAINER /LIBPATH:"%SDL2_UWP_DIR%\bin" SDL2.lib WindowsApp.lib runtimeobject.lib winhttp.lib
 echo LINK_EXIT=%ERRORLEVEL%
 if errorlevel 1 goto :done
 

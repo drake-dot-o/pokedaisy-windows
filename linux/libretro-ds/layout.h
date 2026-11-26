@@ -22,6 +22,11 @@ inline bool ds_auto_run(int field,bool moving,bool aHeld){
     PK_NDS_FIELD_SURF|PK_NDS_FIELD_MENU|PK_NDS_FIELD_TOUCH;
   return moving && !aHeld && (field&(ready|blocked))==ready;
 }
+// A page that owns both screens at once (HeartGold / SoulSilver's summary, the PC, ...): ONE SCREEN lays it side by side,
+// as the app and the manual say, rather than floating the touch screen over the page behind it.
+inline bool ds_dual_screen_app(int bits){
+  return (bits&PK_NDS_FIELD_MENU)&&!(bits&(PK_NDS_FIELD_BATTLE|PK_NDS_FIELD_TOUCH_ONLY|PK_NDS_FIELD_TOP_ONLY));
+}
 struct DsArrangement {
   DsRect top,touch;
   bool floating=false,modal=false,useField=false;
@@ -36,6 +41,9 @@ DsPen ds_pen(const DsArrangement&,int x,int y);
 // picture (fieldRevision) stay. The caller keeps [out] between frames and writes outside the screens' rectangles only
 // through ds_compose; a compose without [kept] into the same buffer must clear held.
 struct DsBackdrop { bool held=false; DsArrangement a; unsigned field=0; };
-// 512x384 stage; sources are unmodified native 256x192 framebuffers.
+// The canvas is outW x outH (the DS's own 512x384 by default); the arrangement's rectangles are in its pixels. An
+// arrangement laid out on the 512x384 stage fills a window-shaped canvas by scaling its rectangles first (the DS core's
+// fit_arrangement). Sources are unmodified native 256x192 framebuffers.
 void ds_compose(uint32_t* out,const DsArrangement&,const uint32_t* top,const uint32_t* bottom,const uint32_t* field=nullptr,
-                void (*overlay)(uint32_t*)=nullptr,DsBackdrop* kept=nullptr,unsigned fieldRevision=0);
+                void (*overlay)(uint32_t*)=nullptr,DsBackdrop* kept=nullptr,unsigned fieldRevision=0,
+                int outW=512,int outH=384);

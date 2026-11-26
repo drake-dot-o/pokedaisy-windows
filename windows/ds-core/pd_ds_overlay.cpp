@@ -733,7 +733,20 @@ bool overlay_hud_native(struct pd_hud* msg)
     msg->active = 1;
     return true;
 }
+bool overlay_status(struct pd_status_bar* msg)
+{
+    if (!msg) return false;
+    if (!companionShown && !quickShown && companionGame != DsGame::Unsupported && (tick % 30 == 0 || !snapshot.valid)) refresh();
+    std::memset(msg, 0, sizeof *msg);
+    const char* place = snapshot.valid ? ds_place(snapshot.map, companionGame) : nullptr;
+    msg->place = place && *place && *place != '?' ? place : nullptr;
+    msg->money = snapshot.valid && snapshot.money >= 0 ? snapshot.money : -1;
+    msg->enabled = shell.settings.statusBar;
+    msg->active = !companionShown && !quickShown;
+    return true;
+}
 bool overlay_wide() { return shell.settings.aspect != PD_ASPECT_ORIGINAL; }
+int overlay_ds_layout() { return std::clamp(shell.layout, 0, DS_LAYOUTS - 1); }
 bool overlay_auto_zoom() { return shell.settings.autoZoom; }
 int overlay_zoom() {
     const int zoom = shell.settings.zoom;
@@ -823,7 +836,15 @@ bool overlay_menu_open() { return companionShown || quickShown; }
 
 bool overlay_touch_screen()
 {
-    return scene.touch && !scene.bottomBlank;
+    return scene.touch && !scene.bottomBlank && !overlay_two_screen_app();
+}
+
+// HeartGold / SoulSilver's summary and the other pages that own both screens (the PC, ...): the app's ONE SCREEN lays
+// them side by side, and so does the core, rather than floating the touch screen over the page behind it (the
+// summary's stats, nature and met place were covered by its moves and party).
+bool overlay_two_screen_app()
+{
+    return ds_dual_screen_app(frameFieldBits);
 }
 
 bool overlay_battle()

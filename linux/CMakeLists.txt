@@ -36,7 +36,7 @@ target_include_directories(pd_puff PUBLIC ../third_party/zlib/contrib/puff)
 # SETTINGS > VERSION: the app's versionName.
 file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/../app/build.gradle.kts POCKET_VERSION_LINE REGEX "versionName = ")
 string(REGEX MATCH "\"[^\"]+\"" POCKET_VERSION "${POCKET_VERSION_LINE}")
-add_executable(pokedaisy-linux main.c library.c cover_png.c)
+add_executable(pokedaisy-linux main.c library.c cover_png.c status_bar.c)
 if(POCKET_VERSION)
   target_compile_definitions(pokedaisy-linux PRIVATE POCKET_VERSION=${POCKET_VERSION})
 endif()

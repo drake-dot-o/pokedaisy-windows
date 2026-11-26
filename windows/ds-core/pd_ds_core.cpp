@@ -4,16 +4,19 @@
 //
 // The picture is the screen the game is on, in DS pixels, and the frontend scales it to the window:
 //   - EXPAND on (the companion's ASPECT) and the field on show: the window is the whole canvas, the top screen in the
-//     middle and EXPAND's margins around it, as far as the window reaches (pokedaisy_panel, the frontend's window, is
+//     middle and EXPAND's margins around it, as far as the window reaches (pokedaisy_window, the frontend's window, is
 //     read every frame, so resizing and fullscreen re-lay it). ZOOM (the companion's row) grows that canvas 1.25x, 1.5x
 //     or 2x, and the frontend scales the whole picture down.
-//   - otherwise the two screens one above the other (top first), 256 x 384.
-// R2 shows the bottom screen (the touch screen) by itself, at the game's own size, until it's pressed again.
+//   - a DS LAYOUT (the companion's SETTINGS): the two screens in its arrangement, on a canvas of the window's own shape
+//     (or of what the host's status bar leaves), so a desktop window never shows the picture between black bars.
+//   - otherwise (ONE SCREEN with EXPAND off) the two screens one above the other, on that same canvas.
+// R2 shows the bottom screen (the touch screen) by itself until it's pressed again, on that canvas too.
 #include "libretro.h"
 #include "pd_ds_overlay.h"
 #include "pk_nds_cores.h"
 #include "pk_nds_field.h"
 #include "pd_env.h"
+#include "layout.h"
 extern "C" {
 #include "pd_fs.h" // pd_save_path: the host's own rule for which .sav is this game's
 }
@@ -38,23 +41,21 @@ constexpr int SAMPLE_RATE = 48000;
 constexpr size_t STATE_MAX = 32u << 20;   // melonDS's states are ~8 MB: room to read one back
 size_t stateSize = 0;                     // the size the first state of this game came out at
 
-// The geometry of this frame (compose_layout): canvas in DS pixels, the top screen's corner in it, and which of the two
-// views is on show.
+// The geometry of this frame (compose_layout): the picture's canvas, and, for a wide picture, the top screen's corner in it.
 struct Layout {
-    enum Mode { Stacked, Wide, Touch } mode = Stacked;
+    enum Mode { Wide, Arrange } mode = Arrange;
     int w = PK_NDS_W, h = PK_NDS_H * 2;
     int x = 0, y = 0;   // the top screen's corner in a Wide canvas
 } layout;
 
-struct ScreenRect {
-    int x = 0, y = 0, w = 0, h = 0;
-    bool contains(int px, int py) const { return w > 0 && h > 0 && px >= x && py >= y && px < x + w && py < y + h; }
-};
+// A chosen DS LAYOUT other than ONE SCREEN: ds_compose's rectangles over a 512 x 384 stage, the same arrangement the
+// Linux DS core and the app use (top / bottom at 2x, side by side, stacked, large + small, picture in picture).
+DsArrangement arrangement;
 
 // ONE SCREEN's floating touch window. A menu gets it at three quarters of the top screen, centred on it (the app's
 // 352 x 264 in its 512 x 384 stage is close to the same proportion). A battle gets 15/32 of the DS screen, a little under
 // half, at the left under the enemy's HP bar, so the battlefield, both Pokemon and their bars stay in view.
-ScreenRect touch_panel_rect(bool battle)
+DsRect touch_panel_rect(bool battle)
 {
     if (layout.mode != Layout::Wide) return {};
     if (battle) {
@@ -115,18 +116,120 @@ void read_options()
     }
 }
 
-// Where this frame goes: EXPAND's canvas when it can be wide (at least 3:2 and the field on show), the two screens when
-// it can't, and the bottom screen alone while R2 holds the view there.
+// The window's area for the picture: the renderer's output, less the strip the host's status bar owns while it is on.
+void frame_area(int& w, int& h)
+{
+    w = panelW > 0 ? panelW : 1280;
+    h = panelH > 0 ? panelH : 720;
+    pd_status_bar bar {};
+    if (overlay_status(&bar) && bar.enabled && bar.active) {
+        const int strip = pd_status_bar_height(h);
+        if (strip > 0 && strip < h / 2) h -= strip;
+    }
+}
+
+// The picture's canvas: the area's shape, sized around the DS's own 512 x 384 (a wider window widens it, a taller one
+// heightens it). A canvas of another shape than the window would be shown between black bars; this one fills it.
+void frame_canvas(int& w, int& h)
+{
+    int areaW, areaH;
+    frame_area(areaW, areaH);
+    const double aspect = (double) areaW / areaH;
+    if (aspect >= 4.0 / 3.0) {
+        w = (int) llround(384.0 * aspect);
+        h = 384;
+        if (w > 2048) {
+            w = 2048;
+            h = (int) llround(w / aspect);
+        }
+    } else {
+        w = 512;
+        h = (int) llround(512.0 / aspect);
+        if (h > 2048) {
+            h = 2048;
+            w = (int) llround(h * aspect);
+        }
+    }
+}
+
+// The app lays an arrangement out on its 512 x 384 stage. The canvas can be another shape (a desktop window), so its
+// rectangles are scaled to the largest size that fits and centred: the screens use the window rather than sitting in a
+// 4:3 picture inside it, and ds_compose fills the rest with the blurred screen.
+void fit_arrangement()
+{
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    bool any = false;
+    auto add = [&](const DsRect& r) {
+        if (r.w <= 0 || r.h <= 0) return;
+        if (!any) {
+            x0 = r.x;
+            y0 = r.y;
+            x1 = r.x + r.w;
+            y1 = r.y + r.h;
+            any = true;
+            return;
+        }
+        x0 = std::min(x0, r.x);
+        y0 = std::min(y0, r.y);
+        x1 = std::max(x1, r.x + r.w);
+        y1 = std::max(y1, r.y + r.h);
+    };
+    add(arrangement.top);
+    add(arrangement.touch);
+    if (!any) return;
+    const double s = std::min((double) layout.w / (x1 - x0), (double) layout.h / (y1 - y0));
+    const int cx = (layout.w - (int) llround((x1 - x0) * s)) / 2;
+    const int cy = (layout.h - (int) llround((y1 - y0) * s)) / 2;
+    auto place = [&](DsRect& r) {
+        if (r.w <= 0 || r.h <= 0) return;
+        const int left = cx + (int) llround((r.x - x0) * s);
+        const int top = cy + (int) llround((r.y - y0) * s);
+        const int right = cx + (int) llround((r.x + r.w - x0) * s);
+        const int bottom = cy + (int) llround((r.y + r.h - y0) * s);
+        r = {left, top, right - left, bottom - top};
+    };
+    place(arrangement.top);
+    place(arrangement.touch);
+}
+
+// Where this frame goes: the companion's DS LAYOUT, or, for ONE SCREEN, EXPAND's canvas when it can be wide (at least 3:2
+// and the field on show); else the two screens stacked. Every non-EXPAND shape is the shared arrangement table's
+// (linux/libretro-ds/layout.cpp), fitted on the picture's canvas; R2 shows the bottom screen alone on it too.
 void compose_layout()
 {
     read_options();
     layout = Layout {};
-    if (touchView) {
-        layout.mode = Layout::Touch;
-        layout.w = PK_NDS_W;
-        layout.h = PK_NDS_H;
+    // A pinned arrangement (the player chose this DS LAYOUT), fitted to this frame's canvas. The HUD's box is the top
+    // screen's, so the host keeps the HUD over it and off the rest of the picture.
+    auto arrange = [&](DsArrangement a) {
+        arrangement = a;
+        layout.mode = Layout::Arrange;
+        frame_canvas(layout.w, layout.h);
+        fit_arrangement();
+        overlay_hud_box(arrangement.top.x, arrangement.top.y, arrangement.top.w, arrangement.top.h);
+    };
+    const int choice = overlay_ds_layout();
+    if (choice != DS_ONE) {
+        DsArrangement a = ds_arrange(choice, DsScenePolicy {}, true);
+        // This host draws the HUD over the whole top screen and cannot move its buttons as the Linux core's HUD does, so
+        // PICTURE IN PICTURE's touch screen sits above the HUD's bottom-right row rather than over it.
+        if (choice == DS_PIP) a.touch = {378, 208, 122, 92};
+        arrange(a);
         return;
     }
+    if (touchView) {
+        arrange(ds_arrange(DS_BOTTOM, DsScenePolicy {}, true));
+        return;
+    }
+    if (overlay_two_screen_app()) {
+        // The game's two-screen pages (HeartGold / SoulSilver's summary, the PC, ...): both screens side by side, as
+        // the app's ONE SCREEN lays them out. ONE SCREEN's floating touch panel covered the page behind it (the
+        // summary's stats, nature and met place).
+        arrange(ds_arrange(DS_SIDE, DsScenePolicy {}, true));
+        return;
+    }
+    int areaW, areaH;
+    frame_area(areaW, areaH);
     if (overlay_wide() && (long long) panelW * 10 >= (long long) panelH * 15) {
         // EXPAND extends the field sideways, not above and below the screen: at 1x the canvas is exactly the window's
         // shape, the screen's height, so every margin is one the 3D fills. A ZOOM step (the companion's SETTINGS, the
@@ -138,7 +241,7 @@ void compose_layout()
         int level = overlay_zoom();
         const int scene = pk_ndsm_wide_scene();
         if (scene != 0 && !(scene == 1 && !overlay_auto_zoom())) level = 0;
-        const int baseW = std::max(PK_NDS_W, (int) llround((double) PK_NDS_H * panelW / panelH));
+        const int baseW = std::max(PK_NDS_W, (int) llround((double) PK_NDS_H * areaW / areaH));
         for (; level > 0; --level) {
             const int w = std::max(PK_NDS_W, (int) llround((double) baseW * zooms[level][0] / zooms[level][1]));
             const int h = (int) llround((double) PK_NDS_H * zooms[level][0] / zooms[level][1]);
@@ -154,10 +257,8 @@ void compose_layout()
                         PK_NDS_W * zooms[level][0] / zooms[level][1], PK_NDS_H * zooms[level][0] / zooms[level][1]);
         return;
     }
-    layout.mode = Layout::Stacked;
-    layout.w = PK_NDS_W;
-    layout.h = PK_NDS_H * 2;
-    overlay_hud_box(0, 0, PK_NDS_W, PK_NDS_H);
+    // ONE SCREEN with EXPAND off: the two screens stacked (the app's STACKED arrangement) on the picture's canvas.
+    arrange(ds_arrange(DS_STACKED, DsScenePolicy {}, true));
 }
 
 inline uint32_t xrgb(uint32_t rgba)
@@ -245,27 +346,63 @@ void blit_nearest(uint32_t* dst, int dstW, int x0, int y0, int dw, int dh, const
 // command draws the 256 x 192 screen itself over the panel's place, so the inside keeps the wide picture until it does.
 void draw_touch_panel(std::vector<uint32_t>& pixels, int w, int h, bool battle, bool native_screen)
 {
-    const ScreenRect panel = touch_panel_rect(battle);
+    const DsRect panel = touch_panel_rect(battle);
     if (!panel.w || !panel.h) return;
-    const ScreenRect frame {panel.x - 3, panel.y - 3, panel.w + 6, panel.h + 6};
+    const DsRect frame {panel.x - 5, panel.y - 5, panel.w + 10, panel.h + 10};
     // A menu dims the field behind its panel; a battle does not: both Pokemon, the bars and the battlefield stay at full
     // brightness while the command panel floats over them.
     if (!battle) {
         for (int y = 0; y < h; ++y)
             for (int x = 0; x < w; ++x) {
-                if (frame.contains(x, y)) continue;
+                if (panel.contains(x, y)) continue;
                 uint32_t& pixel = pixels[(size_t) y * w + x];
                 pixel = 0xFF000000u | ((((pixel >> 16) & 0xFFu) * 140 / 255) << 16)
                                      | ((((pixel >> 8) & 0xFFu) * 140 / 255) << 8)
                                      | (((pixel & 0xFFu) * 140) / 255);
             }
     }
+    // A host that draws the native 256 x 192 bottom screen supplies its frame too (main.c draws the same 5 px dark,
+    // 3 px white ring). A frontend without the command gets the frame and a point-sampled picture here, so the panel
+    // still shows everywhere.
+    if (native_screen) return;
     fill_rect(pixels, w, h, frame.x, frame.y, frame.w, frame.h, 0xFF303840u);
-    fill_rect(pixels, w, h, panel.x - 1, panel.y - 1, panel.w + 2, panel.h + 2, 0xFFF8F8F8u);
-    // A host that can draw the native 256 x 192 bottom screen does the output scaling and covers the panel's inside; other
-    // frontends get the point-sampled fallback, so the panel still shows everywhere.
-    if (!native_screen)
-        blit_nearest(pixels.data(), w, panel.x, panel.y, panel.w, panel.h, pk_ndsm_bottom(), PK_NDS_W, PK_NDS_H);
+    fill_rect(pixels, w, h, panel.x - 3, panel.y - 3, panel.w + 6, panel.h + 6, 0xFFF8F8F8u);
+    blit_nearest(pixels.data(), w, panel.x, panel.y, panel.w, panel.h, pk_ndsm_bottom(), PK_NDS_W, PK_NDS_H);
+}
+
+void send_status_bar()
+{
+    if (!env_cb) return;
+    pd_status_bar st {};
+    if (overlay_status(&st))
+        env_cb(PD_ENV_SET_STATUS_BAR, &st);
+}
+
+// The screen on a canvas of the window's shape, the margins around it the blurred screen (as ds_compose fills an
+// arrangement's margins): a picture EXPAND has no wide view for.
+void compose_screen_with_margins(std::vector<uint32_t>& pixels, const uint32_t* top)
+{
+    static std::vector<uint32_t> screenPixels;
+    screenPixels.resize(PK_NDS_W * PK_NDS_H);
+    for (size_t i = 0; i < screenPixels.size(); ++i) screenPixels[i] = top ? xrgb(top[i]) : 0xFF000000u;
+    DsArrangement framed {};
+    framed.top = {layout.x, layout.y, PK_NDS_W, PK_NDS_H};
+    ds_compose(pixels.data(), framed, screenPixels.data(), nullptr, nullptr, nullptr, nullptr, 0, layout.w, layout.h);
+    for (auto& pixel : pixels) pixel |= 0xFF000000u;
+}
+
+// Whether EXPAND left the canvas around the screen all black: its 3D layer had nothing to draw there.
+bool margins_blank(const std::vector<uint32_t>& pixels)
+{
+    for (int y = 0; y < layout.h; ++y)
+        for (int x = 0; x < layout.w; ++x) {
+            if (x >= layout.x && x < layout.x + PK_NDS_W && y >= layout.y && y < layout.y + PK_NDS_H) {
+                x = layout.x + PK_NDS_W - 1;
+                continue;
+            }
+            if (pixels[(size_t) y * layout.w + x] & 0x00FFFFFFu) return false;
+        }
+    return true;
 }
 
 void compose()
@@ -276,9 +413,21 @@ void compose()
     const bool battle = overlay_battle();
     const bool touch = overlay_touch_screen();
     switch (layout.mode) {
-    case Layout::Touch:
-        blit(canvas.data(), layout.w, layout.h, 0, 0, bottom, PK_NDS_W, PK_NDS_H);
+    case Layout::Arrange: {
+        // An arrangement: a chosen DS LAYOUT, ONE SCREEN's stacked or two-screen page, or R2's bottom screen. ds_compose
+        // scales, frames and fills what the arrangement leaves with the blurred screen, as it does in the Linux core.
+        static std::vector<uint32_t> arrangedTop, arrangedBottom;
+        arrangedTop.resize(PK_NDS_W * PK_NDS_H);
+        arrangedBottom.resize(PK_NDS_W * PK_NDS_H);
+        for (size_t i = 0; i < arrangedTop.size(); ++i) {
+            arrangedTop[i] = top ? xrgb(top[i]) : 0xFF000000u;
+            arrangedBottom[i] = bottom ? xrgb(bottom[i]) : 0xFF000000u;
+        }
+        ds_compose(canvas.data(), arrangement, arrangedTop.data(), arrangedBottom.data(), nullptr, nullptr, nullptr, 0,
+                   layout.w, layout.h);
+        for (auto& pixel : canvas) pixel |= 0xFF000000u;   // ds_compose draws opaque 24-bit colours
         break;
+    }
     case Layout::Wide: {
         // EXPAND draws the whole canvas (the screen's middle and the margins around it) when it has the field's camera
         // this frame (scene 0-2: the field, a text box over it, the extra overlays) or a battle it can carry into the
@@ -315,6 +464,10 @@ void compose()
             if (screen_is_card(top)) {
                 std::fill(canvas.begin(), canvas.end(), 0xFF000000u);
                 blit(canvas.data(), layout.w, layout.h, layout.x, layout.y, top, PK_NDS_W, PK_NDS_H);
+            } else if (margins_blank(canvas)) {
+                // EXPAND's 3D layer has nothing beside the screen here (the intro's 2D scenes, a flat menu): the
+                // margins are the blurred screen, as an arrangement's are, rather than black bars.
+                compose_screen_with_margins(canvas, top);
             } else {
                 lastWide = canvas;
                 lastWideValid = true;
@@ -323,31 +476,41 @@ void compose()
             canvas = lastWide;
             fade_frame(canvas, pk_ndsm_fade() & 0xFF);
         } else {
-            blit(canvas.data(), layout.w, layout.h, layout.x, layout.y, top, PK_NDS_W, PK_NDS_H);
+            compose_screen_with_margins(canvas, top);
         }
         break;
     }
-    case Layout::Stacked:
-        blit(canvas.data(), layout.w, layout.h, 0, 0, top, PK_NDS_W, PK_NDS_H);
-        blit(canvas.data(), layout.w, layout.h, 0, PK_NDS_H, bottom, PK_NDS_W, PK_NDS_H);
-        break;
     }
-    // The game's touch screen floats over the wide picture when it asks for it (a menu, a battle's commands, bag or
-    // party), as the app's ONE SCREEN does. The panel is drawn before the companion / quick menu so those still take the
-    // frame. A host that understands PD_ENV_SET_TOUCH_PANEL draws the bottom screen at its native 256 x 192; the core
-    // then only draws the dim picture and the panel's frame.
+    // The game's touch screen is handed to a host that understands PD_ENV_SET_TOUCH_PANEL at its native 256 x 192, so the
+    // host scales it once to its place and draws it above the HUD (the app's rule: the bottom screen stays whole, the HUD
+    // keeps clear of it). ONE SCREEN's floating panel is the wide picture's: a menu, a battle's commands, bag or party. The
+    // layouts that show both screens (large + small, picture in picture, side by side, stacked) hand over the bottom screen
+    // in its own rectangle. The panel is opened before the companion / quick menu so those still take the frame.
     bool native_panel = false;
-    if (layout.mode == Layout::Wide && touch && !overlay_menu_open()) {
-        const ScreenRect panel = touch_panel_rect(battle);
-        if (bottom) {
+    if (!overlay_menu_open() && bottom) {
+        int px = 0, py = 0, pw = 0, ph = 0;
+        if (layout.mode == Layout::Wide && touch) {
+            const DsRect panel = touch_panel_rect(battle);
+            px = panel.x;
+            py = panel.y;
+            pw = panel.w;
+            ph = panel.h;
+        } else if (layout.mode == Layout::Arrange && arrangement.touch.w > 0) {
+            px = arrangement.touch.x;
+            py = arrangement.touch.y;
+            pw = arrangement.touch.w;
+            ph = arrangement.touch.h;
+        }
+        if (pw > 0 && ph > 0) {
             // The engine's bottom screen is RGBA words; the host's ARGB texture wants XRGB words, the same conversion the
             // frame's own pixels get. Without this the touch window's reds and blues are swapped.
             panelPixels.resize(PK_NDS_W * PK_NDS_H);
             for (size_t i = 0; i < panelPixels.size(); ++i) panelPixels[i] = xrgb(bottom[i]);
-            pd_touch_panel msg { panelPixels.data(), PK_NDS_W, PK_NDS_H, panel.x, panel.y, panel.w, panel.h, 1 };
+            pd_touch_panel msg { panelPixels.data(), PK_NDS_W, PK_NDS_H, px, py, pw, ph, 1 };
             native_panel = env_cb && env_cb(PD_ENV_SET_TOUCH_PANEL, &msg);
         }
-    } else if (env_cb) {
+    }
+    if (!native_panel && env_cb) {
         pd_touch_panel msg {};
         env_cb(PD_ENV_SET_TOUCH_PANEL, &msg);
     }
@@ -356,7 +519,8 @@ void compose()
     // The companion or the quick menu over it: the overlay's canvas at twice the game's size. The HUD goes on the top
     // screen's own pixels first, so the overlay is told where they sit in this picture.
     int outW = layout.w, outH = layout.h;
-    overlay_view(layout.x, layout.y, layout.mode != Layout::Touch);
+    if (layout.mode == Layout::Arrange) overlay_view(arrangement.top.x, arrangement.top.y, arrangement.top.w > 0);
+    else overlay_view(layout.x, layout.y, true);
     overlay_compose(canvas, outW, outH);
     // The HUD at the window's own pixels, for a host that draws it: the canvas above is scaled to the window, and at a
     // ZOOM step (1.25x, 1.5x) a HUD blended into it would be resampled with the picture.
@@ -365,6 +529,7 @@ void compose()
         overlay_hud_native(&hud);
         env_cb(PD_ENV_SET_HUD, &hud);
     }
+    send_status_bar();
     presentedW = outW;
     presentedH = outH;
     video_cb(canvas.data(), outW, outH, outW * (int) sizeof(uint32_t));
@@ -380,8 +545,17 @@ void update_touch(bool overlayOnly)
     bool down = input_cb(0, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_PRESSED) != 0;
     const int px = (int) ((long) (nx + 0x7FFF) * layout.w / 0xFFFE);
     const int py = (int) ((long) (ny + 0x7FFF) * layout.h / 0xFFFE);
+    // The game's touch screen is drawn above the HUD (the panel is the last thing on the picture, and the HUD's buttons may
+    // sit in its corner), so a click inside it is the game's, not the HUD's: picture in picture and large + small keep both.
+    bool on_panel = false;
+    if (!overlay_menu_open()) {
+        if (layout.mode == Layout::Wide && overlay_touch_screen())
+            on_panel = touch_panel_rect(overlay_battle()).contains(px, py);
+        else if (layout.mode == Layout::Arrange && arrangement.touch.w > 0)
+            on_panel = arrangement.touch.contains(px, py);
+    }
     // The overlay first, where its own picture is what the frontend shows: a click on the HUD or the quick menu.
-    if (overlay_pointer((int) ((long) (nx + 0x7FFF) * presentedW / 0xFFFE),
+    if (!on_panel && overlay_pointer((int) ((long) (nx + 0x7FFF) * presentedW / 0xFFFE),
                         (int) ((long) (ny + 0x7FFF) * presentedH / 0xFFFE), down)) {
         pk_ndsm_touch(false, 0, 0);
         return;
@@ -390,10 +564,15 @@ void update_touch(bool overlayOnly)
         pk_ndsm_touch(false, 0, 0);
         return;
     }
+    if (layout.mode == Layout::Arrange) {
+        const DsPen pen = ds_pen(arrangement, px, py);
+        pk_ndsm_touch(down && pen.valid, pen.x, pen.y);
+        return;
+    }
     // The floating touch screen takes the pointer only inside its panel; a click on the dimmed picture beside it is not
     // the game's touch screen. The panel's 256 x 192 pixels are scaled to its place in the wide canvas.
     if (layout.mode == Layout::Wide && overlay_touch_screen()) {
-        const ScreenRect panel = touch_panel_rect(overlay_battle());
+        const DsRect panel = touch_panel_rect(overlay_battle());
         const bool inside = panel.contains(px, py);
         const bool pressed = down && inside;
         const int tx = pressed ? std::clamp((px - panel.x) * PK_NDS_W / panel.w, 0, PK_NDS_W - 1) : 0;
@@ -401,18 +580,8 @@ void update_touch(bool overlayOnly)
         pk_ndsm_touch(pressed, tx, ty);
         return;
     }
-    int x = px, y = py;
-    switch (layout.mode) {
-    case Layout::Touch:
-        break;
-    case Layout::Wide:
-        x = px - layout.x;
-        y = py - layout.y;
-        break;
-    case Layout::Stacked:
-        y = py - PK_NDS_H;   // the bottom screen is the second one
-        break;
-    }
+    // Only the wide picture is left here (an arrangement returned above): its screen rectangle is the game's touch screen.
+    const int x = px - layout.x, y = py - layout.y;
     down = down && x >= 0 && x < PK_NDS_W && y >= 0 && y < PK_NDS_H;
     // PD_DS_TOUCH: the taps as the game gets them, for a pointer that can't be felt on the window.
     static const bool touchLog = std::getenv("PD_DS_TOUCH") != nullptr;
@@ -656,12 +825,15 @@ RETRO_API bool retro_unserialize(const void* data, size_t size)
 RETRO_API void* retro_get_memory_data(unsigned id)
 {
     if (id == RETRO_MEMORY_SAVE_RAM) return const_cast<uint8_t*>(pk_ndsm_save_data());
+    if (id == RETRO_MEMORY_SYSTEM_RAM) return const_cast<uint8_t*>(pk_ndsm_mainram());
     return nullptr;
 }
 
 RETRO_API size_t retro_get_memory_size(unsigned id)
 {
-    return id == RETRO_MEMORY_SAVE_RAM ? pk_ndsm_save_length() : 0;
+    if (id == RETRO_MEMORY_SAVE_RAM) return pk_ndsm_save_length();
+    if (id == RETRO_MEMORY_SYSTEM_RAM) return pk_ndsm_mainram() ? 4u << 20 : 0;
+    return 0;
 }
 
 RETRO_API bool retro_load_game(const struct retro_game_info* game)
@@ -688,6 +860,19 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game)
     frameNo = 0;
     stateSize = 0;
     if (!pk_ndsm_init(game->path, savePath.c_str(), SAMPLE_RATE)) return false;
+    // RetroAchievements' memory map: main RAM at 0x02000000 and the ARM9's DTCM at 0x0E000000. The descriptors point
+    // straight at the engine's memory, so rc_client reads the game while it runs.
+    if (env_cb && pk_ndsm_mainram() && pk_ndsm_dtcm()) {
+        struct retro_memory_descriptor desc[2] = {};
+        desc[0].ptr = const_cast<uint8_t*>(pk_ndsm_mainram());
+        desc[0].start = 0x02000000;
+        desc[0].len = 4u << 20;
+        desc[1].ptr = const_cast<uint8_t*>(pk_ndsm_dtcm());
+        desc[1].start = 0x0E000000;
+        desc[1].len = 0x4000;
+        struct retro_memory_map map = {desc, 2};
+        env_cb(RETRO_ENVIRONMENT_SET_MEMORY_MAPS, &map);
+    }
     // The host loads the .sav into the save memory it reads here; the engine has read the same file at boot.
     overlay_load(game->path, saveDir.c_str());
     // Whether this frontend draws the HUD itself: it takes the HUD's own 256x192 picture (PD_ENV_SET_HUD) and scales it
@@ -707,6 +892,10 @@ RETRO_API void retro_unload_game(void)
     if (hudHost && env_cb) { // the HUD's picture goes with the overlay's buffers
         pd_hud off {};
         env_cb(PD_ENV_SET_HUD, &off);
+    }
+    if (env_cb) {
+        pd_status_bar off {};
+        env_cb(PD_ENV_SET_STATUS_BAR, &off);
     }
     quickFf = false;
     // A save the game is still writing ("SAVING...") finishes first, as the app does before it stops a DS game: else

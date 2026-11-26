@@ -267,6 +267,17 @@ HACKS = [
              CONTROLS_LOCKED=0x03001FDD, PRIMARY_OVERRIDE=640, LAYOUT_VERSIONED=1,
              OBJ_GFX_INFO=0x0850C6F4, OBJ_PALETTES=0x085036B0, OBJ_FACING=0x084FFF58, ELEVATION_PRIO=0x08500360,
              OBJ_GFX_VAR_FROM=0xFFFF, OBJ_GFX_COUNT=0x224, SB1_OFFSETS=0x138C | 0x1ABC << 16)),
+    # Heart and Soul Legends (HUY MAI's HnS 2.x build): its own overworld-battle build, so its RAM moved. Found from
+    # field states (map 6.0, 30x39; the player at 10,13) with pk_wide's checks: VMAP 0x03003E28, the map header
+    # 0x0201FBC4 (its layout at ROM 0x09013A70), gMapGroups 0x090DAF0C, the camera 0x03000D6C (PAN_OFF 12) and gMain
+    # 0x03003550. No object graphics tables yet (0: no far-off objects drawn).
+    dict(name="Heart and Soul Legends v9.8", sha1="cbd7f80a15c16e6e5e6b98aa3d250f255d4881d9", family="EX",
+         pending="its map is ringed by the sea: WIDE's strips would show that water at the edges, so it stays 4:3",
+         save="heart_and_soul_legends", a=dict(
+             VMAP=0x03003E28, MAP_HEADER=0x0201FBC4, MAP_GROUPS=0x090DAF0C, SAVE_BLOCK1_PTR=0x030034C8, SB1_POS=4,
+             CAMERA_OFFSET=0x03000D6C, OBJECT_EVENTS=0x020009A0, SPRITES=0x0201D9A8, COORD_OFFSET=0x0201FB6C,
+             COORD_OFFSET_Y=0x0201FB6E, SPRITE_ORDER=0x0203AFC4, GMAIN=0x03003550, PAN_OFF=12,
+             PRIMARY_OVERRIDE=640, LAYOUT_VERSIONED=1, SB1_OFFSETS=0x138C | 0x1ABC << 16)),
     dict(name="Too Many Types 2 v1.5.2", sha1="3fa8e61ec1727cc51540c54677623f736a446e1b", family="EX", save="tmt2",
          boot=["press B", "wait 30"] * 3, script=0x081DC368, a=dict(
              VMAP=0x030046A8, MAP_HEADER=0x02001BBC, MAP_GROUPS=0x09047730, SAVE_BLOCK1_PTR=0x030057D8,

@@ -16,6 +16,8 @@
 
 #include "pd_canvas.h"
 
+struct pd_menu;
+
 enum {
   LIB_A = 1 << 0, LIB_B = 1 << 1, LIB_X = 1 << 2, LIB_Y = 1 << 3, LIB_L = 1 << 4, LIB_R = 1 << 5, LIB_UP = 1 << 6,
   LIB_DOWN = 1 << 7, LIB_LEFT = 1 << 8, LIB_RIGHT = 1 << 9, LIB_START = 1 << 10, LIB_SELECT = 1 << 11, LIB_MENU = 1 << 12,
@@ -53,6 +55,19 @@ int library_covers(struct lib_cover *out, int max);
 void library_draw_top(struct pd_canvas *c, uint32_t clear);
 /* A menu or a question is up: the host darkens the covers too before library_draw_top. */
 bool library_dimmed(void);
+
+/* The RETROACHIEVEMENTS page opened from SETTINGS, and its text prompt. NULL / false when it is closed. */
+struct pd_menu *library_ra_page(void);
+bool library_ra_prompt(void);
+void library_ra_pointer(int x, int y, bool click);
+void library_ra_key(int key);
+void library_ra_text(const char *utf8);
+void library_ra_paste(void);
+void library_ra_paste_text(const char *utf8);
+#ifdef PD_UWP
+void pd_uwp_clipboard_request(void);
+int pd_uwp_clipboard_poll(char *out, int cap);
+#endif
 /* A game to play (then cleared), NULL = none. */
 const char *library_picked(void);
 /* The player closed the app. */

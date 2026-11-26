@@ -29,7 +29,11 @@
 #include "pd_games.h"
 #include "pd_icons_gen.h"
 #include "pd_library.h"
+#include "pd_menu.h"
 #include "pd_settings.h"
+#ifdef PD_RETROACHIEVEMENTS
+#include "../windows/ra.h"
+#endif
 #include "pd_sha1.h"
 #include "pd_style.h"
 
@@ -47,7 +51,13 @@ void lib_draw_logo_24(struct pd_canvas *c, int x, int y);
 
 enum console { C_GB, C_GBC, C_GBA, C_DS };
 enum view { V_ALL, V_FAV, V_RECENT, V_GB, V_GBC, V_GBA, V_DS, V_HACKS, V_COUNT };
-enum page { P_GAMES, P_TOOLS, P_SETTINGS, P_COUNT };
+enum page {
+  P_GAMES, P_TOOLS, P_SETTINGS,
+#ifdef PD_RETROACHIEVEMENTS
+  P_RETRO,
+#endif
+  P_COUNT
+};
 enum focus { F_RAIL, F_HEADER, F_PILLS, F_GAMES };
 enum sort { S_NAME, S_RECENT, S_COUNT };
 enum { CS_NONE, CS_PATH, CS_READY, CS_FAILED };
@@ -83,6 +93,11 @@ static bool grid = true, quit, menuOpen, closeAsk;
 static int faceColors = 1;
 static int selected, scroll, columns = 4, menuCursor, settingsCursor, settingsScroll, toolCursor;
 static const char *picked;
+#ifdef PD_RETROACHIEVEMENTS
+static bool raPrompt, raPromptInput;
+static struct pd_menu raPageMenu, raPromptMenu;
+static const char *raRows[PD_RA_MAX_ROWS], *raPromptRows[4];
+#endif
 static char notice[96];
 static unsigned noticeUntil;
 static SDL_Thread *worker;
@@ -93,6 +108,7 @@ static int contentY, contentH, contentX, contentW;
 /* What the last draw laid out under the pointer: the same rectangles it drew, so clicks need no second copy of the layout. */
 enum {
   LIB_HIT_RAIL = 1, LIB_HIT_SORT, LIB_HIT_GRID, LIB_HIT_PILL, LIB_HIT_GAME, LIB_HIT_SETTING, LIB_HIT_TOOL, LIB_HIT_MENU, LIB_HIT_CLOSE,
+  LIB_HIT_RA_ROW,
 };
 struct lib_hit {
   int x, y, w, h, action, arg;
@@ -1123,6 +1139,145 @@ static void say(const char *text) {
   noticeUntil = SDL_GetTicks() + 2500;
 }
 
+#ifdef PD_RETROACHIEVEMENTS
+static void ra_page_sync(void) {
+  int n = pd_ra_menu_count();
+  if (n > PD_RA_MAX_ROWS)
+    n = PD_RA_MAX_ROWS;
+  for (int i = 0; i < n; i++)
+    raRows[i] = pd_ra_menu_row(i);
+  raPageMenu.count = n;
+  if (raPageMenu.selected >= n)
+    raPageMenu.selected = n - 1;
+  if (raPageMenu.selected < 0)
+    raPageMenu.selected = 0;
+  if (raPageMenu.scroll > raPageMenu.selected)
+    raPageMenu.scroll = raPageMenu.selected;
+  if (raPageMenu.scroll > n - 1)
+    raPageMenu.scroll = n > 0 ? n - 1 : 0;
+  if (raPageMenu.scroll < 0)
+    raPageMenu.scroll = 0;
+}
+
+static void ra_page_enter(void) {
+  raPrompt = false;
+  raPromptInput = false;
+  pd_ra_menu_open();
+  pd_menu_init(&raPageMenu, "RETROACHIEVEMENTS", raRows, 0);
+  raPageMenu.overlay = true;
+  ra_page_sync();
+}
+
+static void ra_prompt_end(void) {
+  if (raPromptInput)
+    SDL_StopTextInput();
+  raPrompt = false;
+  raPromptInput = false;
+}
+
+static void ra_page_choose(void) {
+  int action = pd_ra_menu_action(raPageMenu.selected);
+  if (action == PD_RA_ROW_SIGN_IN) {
+    pd_ra_sign_in();
+    raPrompt = true;
+    raPromptInput = true;
+    SDL_StartTextInput();
+  } else if (action == PD_RA_ROW_SIGN_OUT) {
+    pd_ra_sign_out();
+  } else if (action == PD_RA_ROW_NOTIFICATIONS) {
+    pd_ra_toggle_notifications();
+  } else {
+    char detail[256];
+    pd_ra_menu_detail(raPageMenu.selected, detail, sizeof detail);
+    say(detail);
+  }
+  ra_page_sync();
+}
+
+struct pd_menu *library_ra_page(void) {
+  if (!raPrompt)
+    return NULL;
+  raPromptRows[0] = pd_ra_prompt_value();
+  raPromptRows[1] = "OK  (ENTER)";
+  raPromptRows[2] = "CANCEL  (ESC)";
+  raPromptRows[3] = "PASTE  (CTRL+V)";
+  pd_menu_init(&raPromptMenu, pd_ra_prompt_title(), raPromptRows, 4);
+  raPromptMenu.overlay = true;
+  return &raPromptMenu;
+}
+
+bool library_ra_prompt(void) { return raPromptInput; }
+
+void library_ra_pointer(int x, int y, bool click) {
+  if (!raPrompt || !click)
+    return;
+  pd_menu_touch(&raPromptMenu, x, y, true);
+  int row = pd_menu_touch(&raPromptMenu, x, y, false);
+  if (row == 1) {
+    if (pd_ra_prompt_submit())
+      ra_prompt_end();
+  } else if (row == 2) {
+    pd_ra_prompt_cancel();
+    ra_prompt_end();
+  } else if (row == 3) {
+    library_ra_paste();
+  }
+}
+
+void library_ra_paste_text(const char *utf8) {
+  if (raPromptInput)
+    pd_ra_prompt_text(utf8);
+}
+
+void library_ra_paste(void) {
+  if (!raPromptInput)
+    return;
+#ifdef PD_UWP
+  pd_uwp_clipboard_request();
+#else
+  char *text = SDL_GetClipboardText();
+  if (text) {
+    library_ra_paste_text(text);
+    SDL_free(text);
+  }
+#endif
+}
+
+void library_ra_text(const char *utf8) {
+  if (!raPromptInput)
+    return;
+  // Some Windows text input paths report Enter as a line break here instead of a keydown.
+  if (strchr(utf8, '\r') || strchr(utf8, '\n')) {
+    if (pd_ra_prompt_submit())
+      ra_prompt_end();
+    return;
+  }
+  pd_ra_prompt_text(utf8);
+}
+
+void library_ra_key(int key) {
+  if (!raPromptInput || !key)
+    return;
+  if (key == SDLK_ESCAPE) {
+    pd_ra_prompt_cancel();
+    ra_prompt_end();
+  } else if (key == SDLK_BACKSPACE || key == SDLK_DELETE) {
+    pd_ra_prompt_backspace();
+  } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+    if (pd_ra_prompt_submit())
+      ra_prompt_end();
+  }
+}
+#else
+struct pd_menu *library_ra_page(void) { return NULL; }
+bool library_ra_prompt(void) { return false; }
+void library_ra_pointer(int x, int y, bool click) { (void)x, (void)y, (void)click; }
+void library_ra_text(const char *utf8) { (void)utf8; }
+void library_ra_paste(void) {}
+void library_ra_paste_text(const char *utf8) { (void)utf8; }
+void library_ra_key(int key) { (void)key; }
+#endif
+
 static int visible_views(int *out) {
   int n = 0;
   for (int v = 0; v < V_COUNT; v++)
@@ -1281,6 +1436,10 @@ static void move_games(unsigned down) {
 void library_keys(unsigned down) {
   if (!down)
     return;
+#ifdef PD_RETROACHIEVEMENTS
+  if (raPrompt)
+    return; // text input owns the keys; Enter / Esc and the prompt's buttons do the rest
+#endif
   if (closeAsk) {
     if (down & (LIB_LEFT | LIB_RIGHT | LIB_UP | LIB_DOWN))
       menuCursor ^= 1;
@@ -1317,11 +1476,30 @@ void library_keys(unsigned down) {
     if (down & (LIB_A | LIB_RIGHT)) {
       page = railCursor;
       focus = F_GAMES;
+#ifdef PD_RETROACHIEVEMENTS
+      if (page == P_RETRO)
+        ra_page_enter();
+#endif
     }
     if ((down & LIB_B) && page != P_GAMES)
       page = P_GAMES, railCursor = P_GAMES;
     return;
   }
+#ifdef PD_RETROACHIEVEMENTS
+  if (page == P_RETRO) {
+    if (down & LIB_UP)
+      pd_menu_move(&raPageMenu, -1);
+    if (down & LIB_DOWN)
+      pd_menu_move(&raPageMenu, 1);
+    if (down & (LIB_A | LIB_RIGHT))
+      ra_page_choose();
+    if (down & LIB_LEFT)
+      focus = F_RAIL, railCursor = P_RETRO;
+    if (down & LIB_B)
+      page = P_GAMES, focus = F_GAMES;
+    return;
+  }
+#endif
   if (page == P_SETTINGS) {
     int n = settings_rows();
     if (down & LIB_UP)
@@ -1455,7 +1633,11 @@ static const struct look LOOKS[V_COUNT] = {
     {0x1FB8AA, 0x17A396, 0xFFFFFF, 0x0A4C46}, {0xD9302E, 0xC22422, 0xFFFFFF, 0x5C0A0A},
 };
 static const char *const VIEW_NAMES[V_COUNT] = {"ALL", "FAVORITES", "RECENT", "GB", "GBC", "GBA", "DS", "HACKS"};
-static const char *const PAGE_NAMES[P_COUNT] = {"GAMES", "TOOLS", "SETTINGS"};
+static const char *const PAGE_NAMES[P_COUNT] = {"GAMES", "TOOLS", "SETTINGS"
+#ifdef PD_RETROACHIEVEMENTS
+                                              , "RETRO"
+#endif
+};
 
 static const char *const TOOLBOX_ROWS[] = {
     "................", ".....kkkkkk.....", "....kggggggk....", "....kgkkkkgk....", ".kkkkkkkkkkkkkk.", "khhhhhhhhhhhhhhk",
@@ -1464,6 +1646,17 @@ static const char *const TOOLBOX_ROWS[] = {
 };
 static const uint32_t TOOLBOX_COLORS[] = {0x303038, 0xA8A8B8, 0xFF9080, 0xE04040, 0xA02828, 0xF8D030};
 static const struct pd_art TOOLBOX = {16, 16, TOOLBOX_ROWS, "kghrdy", TOOLBOX_COLORS};
+
+#ifdef PD_RETROACHIEVEMENTS
+// RETRO: a small trophy, our own 16 px drawing like the toolbox.
+static const char *const RA_ROWS[] = {
+    "................", "..kkkkkkkkkkkk..", "..kyyyyyyyyyyk..", "..kkyyyyyyyykk..", "..kkyywwwwyykk..",
+    "..kkyywwwwyykk..", "..kkyywwwwyykk..", "...kyyyyyyyyk...", "....kyyyyyyk....", ".....kyyyyk.....",
+    "......kyyk......", ".....kyyyyk.....", "....kkkkkkkkk...", "...kdddddddddk..", "...kkkkkkkkkk...", "................",
+};
+static const uint32_t RA_COLORS[] = {0x303038, 0xF8C838, 0xFFF3B0, 0xA07018};
+static const struct pd_art RA_ICON = {16, 16, RA_ROWS, "kywd", RA_COLORS};
+#endif
 
 static const char *const SAVE_ROWS[] = {"1111111..", "1.1111.1.", "1.1111.11", "1.......1", "1.11111.1",
                                         "1.1...1.1", "1.11111.1", "111111111"};
@@ -1546,7 +1739,11 @@ static void draw_rail(struct pd_canvas *c) {
   int rw = rail_w();
   // Docked to the screen's edge: its frame only on the side facing the page.
   pd_layered_box(c, -8, -8, rw + 8, c->h + 16, 3, pd_cur->list, pd_cur->listCount, PD_LIST_FILL);
-  const struct pd_art *art[P_COUNT] = {&LIB_ICON_GAMES, &TOOLBOX, &LIB_ICON_SETTINGS};
+  const struct pd_art *art[P_COUNT] = {&LIB_ICON_GAMES, &TOOLBOX, &LIB_ICON_SETTINGS
+#ifdef PD_RETROACHIEVEMENTS
+                                                                          , &RA_ICON
+#endif
+  };
   int ih = 56;
   for (int i = 0; i < P_COUNT; i++) {
     int x = 6, y = M + i * (ih + 6), w = rw - 14;
@@ -1822,6 +2019,55 @@ static void draw_settings(struct pd_canvas *c) {
   pd_unclip(c);
 }
 
+#ifdef PD_RETROACHIEVEMENTS
+static void draw_retro(struct pd_canvas *c) {
+  ra_page_sync();
+  int f = pd_list_box(c, contentX, contentY, contentW, contentH);
+  int rowH = 24, rows = (contentH - 2 * f - 4) / rowH;
+  if (rows < 1)
+    rows = 1;
+  int n = raPageMenu.count;
+  if (raPageMenu.selected < raPageMenu.scroll)
+    raPageMenu.scroll = raPageMenu.selected;
+  if (raPageMenu.selected >= raPageMenu.scroll + rows)
+    raPageMenu.scroll = raPageMenu.selected - rows + 1;
+  if (raPageMenu.scroll < 0)
+    raPageMenu.scroll = 0;
+  pd_clip(c, contentX + f, contentY + f, contentW - 2 * f, contentH - 2 * f);
+  if (!n) {
+    pd_text(c, contentX + f + 8, contentY + f + 6, "No RetroAchievements information yet.", PD_LABEL, PD_LABEL_SHADOW);
+  } else {
+    for (int r = 0; r < rows; r++) {
+      int i = raPageMenu.scroll + r;
+      if (i >= n)
+        break;
+      int y = contentY + f + 2 + r * rowH;
+      int action = pd_ra_menu_action(i);
+      bool cur = i == raPageMenu.selected && focus == F_GAMES;
+      if (cur)
+        pd_fill(c, contentX + f, y, contentW - 2 * f, rowH, PD_ROW_SELECTED);
+      uint32_t text = action == PD_RA_ROW_INFO ? PD_MUTED : PD_LABEL;
+      uint32_t shadow = action == PD_RA_ROW_INFO ? PD_MUTED_SHADOW : PD_LABEL_SHADOW;
+      int right = action == PD_RA_ROW_SIGN_IN || action == PD_RA_ROW_SIGN_OUT ? 42 : 12;
+      pd_text_fit(c, contentX + f + 12, pd_text_y(y, rowH), contentW - 2 * f - right - 12, raRows[i], text, shadow);
+      if (action == PD_RA_ROW_SIGN_IN || action == PD_RA_ROW_SIGN_OUT)
+        pd_text_right(c, contentX + contentW - f - 12, pd_text_y(y, rowH), "OPEN", PD_VALUE, PD_VALUE_SHADOW);
+      hit_add_clipped(contentX + f, y, contentW - 2 * f, rowH, contentX + f, contentY + f, contentW - 2 * f, contentH - 2 * f,
+                      LIB_HIT_RA_ROW, i);
+    }
+  }
+  if (n > rows) {
+    int track = rows * rowH, th = track * rows / n, ty = track * raPageMenu.scroll / n;
+    if (th < 6)
+      th = 6;
+    pd_fill(c, contentX + contentW - f - 4, contentY + f + 2 + ty, 2, th, PD_MUTED);
+  }
+  pd_unclip(c);
+}
+#else
+static void draw_retro(struct pd_canvas *c) { (void)c; }
+#endif
+
 static void draw_tools(struct pd_canvas *c) {
   static const char *const NAMES[2] = {"SAVE EDITOR", "TRADE SAVES"};
   static const char *const BLURBS[2] = {"Your party, PC boxes, money and bag.", "Trade Pokemon between two of your saves."};
@@ -1856,13 +2102,16 @@ void library_draw(struct pd_canvas *c) {
     contentH = c->h - contentY;
     draw_games(c);
   } else {
-    draw_header(c, x, w, page == P_TOOLS ? "TOOLS" : "SETTINGS", false);
+    const char *title = page == P_TOOLS ? "TOOLS" : page == P_SETTINGS ? "SETTINGS" : "RETROACHIEVEMENTS";
+    draw_header(c, x, w, title, false);
     contentY = M + HEADER_H + GAP;
     contentH = c->h - contentY - M;
     if (page == P_TOOLS)
       draw_tools(c);
-    else
+    else if (page == P_SETTINGS)
       draw_settings(c);
+    else
+      draw_retro(c);
   }
 }
 
@@ -2012,6 +2261,10 @@ void library_pointer(int x, int y, bool click, int wheel) {
     if (h->action == LIB_HIT_RAIL) {
       page = railCursor = h->arg;
       focus = F_GAMES;
+#ifdef PD_RETROACHIEVEMENTS
+      if (page == P_RETRO)
+        ra_page_enter();
+#endif
     } else if (h->action == LIB_HIT_SORT) {
       sortBy = (sortBy + 1) % S_COUNT;
       say(sortBy == S_NAME ? "Sorted by name" : "Sorted by last played");
@@ -2040,6 +2293,12 @@ void library_pointer(int x, int y, bool click, int wheel) {
       settingsCursor = h->arg;
       focus = F_GAMES;
       setting_step(settingsCursor, 1);
+#ifdef PD_RETROACHIEVEMENTS
+    } else if (h->action == LIB_HIT_RA_ROW) {
+      raPageMenu.selected = h->arg;
+      focus = F_GAMES;
+      ra_page_choose();
+#endif
     } else if (h->action == LIB_HIT_TOOL) {
       toolCursor = h->arg;
       focus = F_GAMES;
@@ -2073,9 +2332,23 @@ void library_pointer(int x, int y, bool click, int wheel) {
       for (int i = 0; i < steps; i++)
         toolCursor = (toolCursor + dir + 2) % 2;
       focus = F_GAMES;
+#ifdef PD_RETROACHIEVEMENTS
+    } else if (h->action == LIB_HIT_RA_ROW) {
+      focus = F_GAMES;
+      for (int i = 0; i < steps; i++)
+        pd_menu_move(&raPageMenu, dir);
+#endif
     }
     return;
   }
+#ifdef PD_RETROACHIEVEMENTS
+  if (page == P_RETRO) {
+    focus = F_GAMES;
+    for (int i = 0; i < steps; i++)
+      pd_menu_move(&raPageMenu, dir);
+    return;
+  }
+#endif
   if (page == P_SETTINGS) {
     int n = settings_rows();
     for (int i = 0; i < steps; i++)

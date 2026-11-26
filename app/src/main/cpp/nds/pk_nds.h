@@ -43,6 +43,11 @@ void pk_nds_run_frame(void);
 uint32_t* pk_nds_top(void);
 uint32_t* pk_nds_bottom(void);
 
+// The emulated ARM9 memory, for hosts that publish a libretro memory map (RetroAchievements): main RAM and the
+// ARM9's DTCM. Emu thread, between frames; NULL with no DS game.
+const uint8_t* pk_ndsm_mainram(void);
+const uint8_t* pk_ndsm_dtcm(void);
+
 // Up to maxFrames interleaved L/R s16 frames of audio from the last run frame; returns the frames copied.
 int pk_nds_read_audio(int16_t* out, int maxFrames);
 // Samples per emulated second the audio is resampled to (EmulatorEngine's vsync pacing).

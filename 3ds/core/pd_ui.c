@@ -152,6 +152,7 @@ void ui_toggle_act(struct pd_ui* ui, int i) {
     if (ui->overlay == PD_OVERLAY_HUD) {
         // HUD, then LAYOUT / LOOK / SIZE (each cycles on a press, FieldHud.kt's fieldHudRows), then the parts.
         if (i == 0) s->hud = !s->hud;
+        else if (i == 4 + PD_HUD_PARTS) s->statusBar = !s->statusBar;
         else if (!s->hud) return;
         else if (i == 1) {
             if (ui->hudLayoutFixed) return;
@@ -504,6 +505,7 @@ void pd_ui_draw(struct pd_ui* ui, struct pd_canvas* c, const struct pd_game* g,
 // The list a drag scrolls right now.
 static int* scroll_target(struct pd_ui* ui) {
     if (ui->overlay == PD_OVERLAY_PLACES || ui->overlay == PD_OVERLAY_FLY) return &ui->placesScroll;
+    if (ui->overlay == PD_OVERLAY_HUD || ui->overlay == PD_OVERLAY_TAB_BAR) return &ui->overlayScroll;
     switch (ui->tab) {
     case PD_TAB_BAG: return &ui->bagScroll;
     case PD_TAB_DEX: return ui->dexOpen && ui->dexSection ? &ui->dexPageScroll : &ui->dexScroll;
@@ -547,7 +549,9 @@ static void act(struct pd_ui* ui, int id) {
     if (ui->overlay == PD_OVERLAY_MORE && (id == HIT_MORE_TAB_BAR || id == HIT_MORE || (id >= HIT_TAB && id < HIT_TAB + PD_TAB_COUNT)))
         ui->overlay = id == HIT_MORE ? PD_OVERLAY_MORE : PD_OVERLAY_NONE;
     if (ui->overlay == PD_OVERLAY_TAB_BAR || ui->overlay == PD_OVERLAY_HUD || ui->overlay == PD_OVERLAY_MORE) {
-        if (id >= HIT_OPTION && id < HIT_OPTION + UI_BAR_CHOICES) {
+        // HUD has more rows than the tab bar: its parts and STATUS BAR come after UI_BAR_CHOICES.
+        const int rows = ui->overlay == PD_OVERLAY_HUD ? 5 + PD_HUD_PARTS : UI_BAR_CHOICES;
+        if (id >= HIT_OPTION && id < HIT_OPTION + rows) {
             ui_toggle_act(ui, id - HIT_OPTION);
         } else if (id == HIT_NO || id == HIT_SCRIM || id == HIT_MORE) {
             close_overlay(ui, PD_ACTION_NONE);
@@ -602,12 +606,15 @@ static void act(struct pd_ui* ui, int id) {
     } else if (id == HIT_MORE_TAB_BAR) {
         ui->tab = PD_TAB_SETTINGS;
         ui->overlay = PD_OVERLAY_TAB_BAR;
+        ui->overlayScroll = 0;
     } else if (id >= HIT_SETTINGS_GROUP && id < HIT_SETTINGS_GROUP + 10) {
         ui_settings_group(ui, id - HIT_SETTINGS_GROUP);
     } else if (id == HIT_SETTING + SETTING_TAB_BAR) {
         ui->overlay = PD_OVERLAY_TAB_BAR;
+        ui->overlayScroll = 0;
     } else if (id == HIT_SETTING + SETTING_HUD) {
         ui->overlay = PD_OVERLAY_HUD;
+        ui->overlayScroll = 0;
     } else if (id == HIT_SETTING + SETTING_FF_TOGGLE) {
         ui->action = PD_ACTION_TOGGLE_FF;
     } else if (id == HIT_SETTING + SETTING_GAME_SPEED) {
@@ -880,7 +887,7 @@ int pd_ui_tab_menu_count(const struct pd_ui* ui) {
     enum pd_tab tabs[UI_BAR_CHOICES];
     if (ui->overlay == PD_OVERLAY_MORE) return ui_more_tabs(ui, ui->drawnGame, tabs);
     if (ui->overlay == PD_OVERLAY_TAB_BAR) return ui_configurable_tabs(ui, tabs);
-    if (ui->overlay == PD_OVERLAY_HUD) return 4 + PD_HUD_PARTS; // HUD, LAYOUT, LOOK, SIZE, then the parts
+    if (ui->overlay == PD_OVERLAY_HUD) return 5 + PD_HUD_PARTS; // HUD, LAYOUT, LOOK, SIZE, the parts, then STATUS BAR
     return 0;
 }
 

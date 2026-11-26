@@ -32,4 +32,25 @@ struct pd_hud {
   int active;
 };
 
+/* The running game's status-bar facts (the app's GameStatusBar): the game's name, the place, and money where the game
+ * has it. A host that draws the bar itself (the SDL hosts) takes them with each frame; another frontend answers false
+ * and the core keeps them to itself. [title] / [place] are UTF-8 and stay valid until the core's next frame; empty / NULL
+ * means unknown. enabled = the companion's STATUS BAR setting; active = 0 hides the bar just now (a companion menu, a
+ * battle transition, no game). */
+#define PD_ENV_SET_STATUS_BAR 0x20004
+struct pd_status_bar {
+  const char *title, *place;
+  int money;     /* -1 = unknown */
+  int enabled, active;
+};
+
+/* The SDL hosts' status bar: its whole-pixel scale for a window [h] pixels tall, and the strip's height. A core that
+ * lays its canvas out for the area under the bar (the DS core) uses the same rule, so both agree on what is left. */
+enum { PD_STATUS_BAR_HEIGHT = 20 };
+static inline int pd_status_bar_scale(int h) {
+  const int s = h / 240;
+  return s < 1 ? 1 : s > 4 ? 4 : s;
+}
+static inline int pd_status_bar_height(int h) { return PD_STATUS_BAR_HEIGHT * pd_status_bar_scale(h); }
+
 #endif

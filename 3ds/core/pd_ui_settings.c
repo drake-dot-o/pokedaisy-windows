@@ -504,11 +504,29 @@ static void toggle_page(struct pd_ui* ui, struct pd_canvas* c, const char* title
     int y = CONTENT_Y + 4;
     title_window(c, y, title);
     y += TITLE_H + 4;
-    int lf = pd_list_box(c, x, y, w, n * ROW_H + 2 * 7 + 4 + (note ? 16 : 0));
+    // The rows scroll inside the screen: HUD has more (the switch, LOOK, SIZE and every part, then STATUS BAR) than a
+    // DS / 3DS screen holds at once. The list stops above the note instead of running off the bottom.
+    int listH = c->h - MARGIN - y - (note ? 16 : 0);
+    if (listH < 18) listH = 18;
+    int lf = pd_list_box(c, x, y, w, listH);
     int ix = x + lf + 4, iw = w - 2 * (lf + 4);
-    int ry = y + lf + 2;
+    int top = y + lf + 2, bottom = y + listH - lf - 2, view = bottom - top;
+    if (view < ROW_H) view = ROW_H;
+    const int total = n * ROW_H;
+    const bool hasBar = total > view;
+    if (hasBar) iw -= SCROLL_BAR_W + 2;
     if (ui->startId < 0) ui->startId = HIT_OPTION;
+    // The D-pad's row (the host's focus) or the pointer's: keep it in view as it moves.
+    int selected = -1;
+    if (ui->pressedId >= HIT_OPTION && ui->pressedId < HIT_OPTION + n) selected = ui->pressedId - HIT_OPTION;
+    else if (ui->focusId >= HIT_OPTION && ui->focusId < HIT_OPTION + n) selected = ui->focusId - HIT_OPTION;
+    ui->overlayScroll = ui_clamp_scroll(ui->overlayScroll, total, view);
+    if (selected >= 0) ui->overlayScroll = ui_scroll_to(ui->overlayScroll, selected * ROW_H, ROW_H, view);
+    ui_add_scroll_hit(ui, x + lf, top, w - 2 * lf, view, HIT_SETTINGS_LIST);
+    pd_clip(c, x + lf, top, w - 2 * lf, view);
     for (int i = 0; i < n; i++) {
+        int ry = top + i * ROW_H - ui->overlayScroll;
+        if (ry + ROW_H <= top || ry >= bottom) continue;
         bool sel = ui->pressedId == HIT_OPTION + i;
         if (on) {
             // A value of its own (HUD's LAYOUT / LOOK / SIZE), else ON / OFF.
@@ -526,9 +544,12 @@ static void toggle_page(struct pd_ui* ui, struct pd_canvas* c, const char* title
         }
         ui_add_hit(ui, ix - 4, ry, iw + 8, ROW_H, HIT_OPTION + i);
         if (i < n - 1) ui_row_divider(c, ix - 2, ry + ROW_H - 1, iw + 4);
-        ry += ROW_H;
     }
-    if (note) pd_text_fit(c, ix, ry + 2, iw, note, PD_MUTED, PD_MUTED_SHADOW);
+    pd_unclip(c);
+    if (hasBar)
+        ui_scroll_rail(ui, c, x + w - lf - SCROLL_BAR_W - 2, top + 2, SCROLL_BAR_W, view - 4,
+                       ui->overlayScroll, total, view);
+    if (note) pd_text_fit(c, ix, c->h - MARGIN - 14, iw, note, PD_MUTED, PD_MUTED_SHADOW);
 }
 
 static void tab_bar_page(struct pd_ui* ui, struct pd_canvas* c) {
@@ -545,7 +566,7 @@ static void tab_bar_page(struct pd_ui* ui, struct pd_canvas* c) {
 
 // FieldHud.kt's fieldHudRows: the switch, LAYOUT / LOOK / SIZE (a press cycles them), then which parts show.
 static void hud_page(struct pd_ui* ui, struct pd_canvas* c) {
-    enum { N = 4 + PD_HUD_PARTS };
+    enum { N = 5 + PD_HUD_PARTS };
     const struct pd_settings* s = ui->settings;
     const char* labels[N] = { "HUD", "LAYOUT", "LOOK", "SIZE" };
     const char* values[N] = { NULL, pd_hud_layout_name(s->hudLayout), pd_hud_look_name(s->hudLook),
@@ -560,6 +581,10 @@ static void hud_page(struct pd_ui* ui, struct pd_canvas* c) {
         on[4 + i] = !((s->hudHidden >> i) & 1);
         muted[4 + i] = !s->hud;
     }
+    // The status bar is its own switch, not a HUD part: it stays usable with the HUD off.
+    labels[4 + PD_HUD_PARTS] = "STATUS BAR";
+    on[4 + PD_HUD_PARTS] = s->statusBar;
+    muted[4 + PD_HUD_PARTS] = false;
     toggle_page(ui, c, "HUD", labels, on, muted, N, "Shown over the overworld, off in menus and battles.", values);
 }
 

@@ -21,13 +21,20 @@ bool overlay_open();
 // The companion or the quick menu has the picture: the host's native touch panel must not be drawn over either.
 bool overlay_menu_open();
 // The game wants its touch screen over the wide picture: the app's ONE SCREEN floating window. The core draws the bottom
-// screen in a panel over the top one while this is true, including a battle's command, move, bag and party screens.
+// screen in a panel over the top one while this is true, including a battle's command, move, bag and party screens. A
+// page that owns both screens (a summary, the PC, ...) is not one: it goes side by side instead.
 bool overlay_touch_screen();
+// The game's page owns both screens at once (HeartGold / SoulSilver's summary, the PC, ...): ONE SCREEN lays it out side
+// by side, as the app and the manual say, rather than floating the touch screen over the page behind it.
+bool overlay_two_screen_app();
 // This frame's field read says a battle runs: the core lets EXPAND carry the battle into the wide margins.
 bool overlay_battle();
 // The companion's ASPECT / ZOOM (its SETTINGS, the app's SCREEN group): the core lays the wide picture out for them.
 // ZOOM is the app's list step, 0 = 1x (EXPAND as it was).
 bool overlay_wide();
+// The companion's DS LAYOUT (Settings, the app's DsLayout): ONE SCREEN, TOP, BOTTOM, SIDE BY SIDE, STACKED,
+// LARGE + SMALL or PICTURE IN PICTURE. The Windows core lays the game out for it, as the Linux core does.
+int overlay_ds_layout();
 int overlay_zoom();
 // SETTINGS > AUTO ZOOM IN: whether a text box on the field steps the ZOOM in to 1x (the app's rule).
 bool overlay_auto_zoom();
@@ -62,3 +69,6 @@ bool overlay_state_load();
 // The quick menu's FF tile: the host owns the speed, so ask it to toggle. False when the frontend doesn't know the command.
 bool overlay_fast_forward();
 bool overlay_set_fast_forward(bool on);
+// The running game's status-bar facts (PD_ENV_SET_STATUS_BAR): place and money from the companion snapshot, refreshed a
+// few times a second while the game shows. [msg] is filled and true returned; the DS core sends it to the host.
+bool overlay_status(struct pd_status_bar* msg);

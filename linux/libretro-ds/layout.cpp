@@ -3,6 +3,7 @@
 #include "layout.h"
 #include <algorithm>
 #include <cmath>
+#include <vector>
 extern "C" {
 #include "pd_canvas.h"
 #include "pd_style.h"
@@ -12,8 +13,7 @@ void DsScenePolicy::tick(int bits,bool topBlank,bool bottom,bool floatBattle){
   darkBefore=both;bottomBlank=bottom;
   dark=both||(menu&&topBlank);
   const bool fades=bits&PK_NDS_FIELD_TOUCH_FADES;
-  const bool dualScreenApp=(bits&PK_NDS_FIELD_MENU)&&
-    !(bits&(PK_NDS_FIELD_BATTLE|PK_NDS_FIELD_TOUCH_ONLY|PK_NDS_FIELD_TOP_ONLY));
+  const bool dualScreenApp=ds_dual_screen_app(bits);
   dualScreenLitFrames=dualScreenApp&&!both?std::min(12,dualScreenLitFrames+1):0;
   if(!fades){fadeOpened=false;fadeClosed=false;}
   if(fades&&fadeOpened&&bottom){
@@ -104,13 +104,13 @@ DsPen ds_pen(const DsArrangement& a,int x,int y){
   return {true,std::clamp((x-a.touch.x)*256/a.touch.w,0,255),std::clamp((y-a.touch.y)*192/a.touch.h,0,191)};
 }
 void ds_compose(uint32_t* out,const DsArrangement& a,const uint32_t* top,const uint32_t* bottom,const uint32_t* field,
-                void (*overlay)(uint32_t*),DsBackdrop* kept,unsigned fieldRevision){
+                void (*overlay)(uint32_t*),DsBackdrop* kept,unsigned fieldRevision,int outW,int outH){
   auto blit=[&](const uint32_t* src,const DsRect& r){
     if(r.w<=0||r.h<=0)return;
     // A screen at its own size, whole inside the frame (side by side, stacked): rows copied, no scaling maths.
-    if(r.w==256&&r.h==192&&r.x>=0&&r.y>=0&&r.x<=256&&r.y<=192){
+    if(r.w==256&&r.h==192&&r.x>=0&&r.y>=0&&r.x<=outW-256&&r.y<=outH-192){
       for(int y=0;y<192;++y){
-        uint32_t* to=out+(r.y+y)*512+r.x;const uint32_t* from=src+y*256;
+        uint32_t* to=out+(r.y+y)*outW+r.x;const uint32_t* from=src+y*256;
         for(int x=0;x<256;++x)to[x]=from[x]&0xffffff;
       }
       return;
@@ -121,8 +121,8 @@ void ds_compose(uint32_t* out,const DsArrangement& a,const uint32_t* top,const u
     const bool between=(r.w>256 && r.w%256) || (r.h>192 && r.h%192);
     if(!between){
       for(int y=0;y<r.h;++y)for(int x=0;x<r.w;++x)
-        if(r.x+x>=0&&r.x+x<512&&r.y+y>=0&&r.y+y<384)
-          out[(r.y+y)*512+r.x+x]=src[(y*192/r.h)*256+x*256/r.w]&0xffffff;
+        if(r.x+x>=0&&r.x+x<outW&&r.y+y>=0&&r.y+y<outH)
+          out[(r.y+y)*outW+r.x+x]=src[(y*192/r.h)*256+x*256/r.w]&0xffffff;
       return;
     }
     // Per output column / row: the first DS pixel it covers and that pixel's share in 256ths (the rest is the next one's).
@@ -134,8 +134,8 @@ void ds_compose(uint32_t* out,const DsArrangement& a,const uint32_t* top,const u
         share[i]=b<=edge?256:(edge-a)*256/(b-a);
       }
     };
-    int cx[512],wx[512],cy[384],wy[384];
-    spans(r.w,256,cx,wx);spans(r.h,192,cy,wy);
+    std::vector<int> cx(r.w),wx(r.w),cy(r.h),wy(r.h);
+    spans(r.w,256,cx.data(),wx.data());spans(r.h,192,cy.data(),wy.data());
     // p's share w (of 256) and q's the rest, per channel: red and blue in one multiply (each lane stays under 16 bits).
     auto mix=[](uint32_t p,uint32_t q,int w){
       if(w>=256)return p&0xffffff;
@@ -145,15 +145,15 @@ void ds_compose(uint32_t* out,const DsArrangement& a,const uint32_t* top,const u
       return rb|(g<<8);
     };
     for(int y=0;y<r.h;++y){
-      const int oy=r.y+y;if(oy<0||oy>=384)continue;
+      const int oy=r.y+y;if(oy<0||oy>=outH)continue;
       const uint32_t* r0=src+cy[y]*256;const uint32_t* r1=src+std::min(cy[y]+1,191)*256;
       for(int x=0;x<r.w;++x){
-        const int ox=r.x+x;if(ox<0||ox>=512)continue;
+        const int ox=r.x+x;if(ox<0||ox>=outW)continue;
         // Most output pixels lie inside one DS pixel: copied, with no blend.
-        if(wx[x]>=256 && wy[y]>=256){out[oy*512+ox]=r0[cx[x]]&0xffffff;continue;}
+        if(wx[x]>=256 && wy[y]>=256){out[oy*outW+ox]=r0[cx[x]]&0xffffff;continue;}
         const int x1=std::min(cx[x]+1,255);
-        const uint32_t top=mix(r0[cx[x]],r0[x1],wx[x]);
-        out[oy*512+ox]=wy[y]>=256?top:mix(top,mix(r1[cx[x]],r1[x1],wx[x]),wy[y]);
+        const uint32_t mixed=mix(r0[cx[x]],r0[x1],wx[x]);
+        out[oy*outW+ox]=wy[y]>=256?mixed:mix(mixed,mix(r1[cx[x]],r1[x1],wx[x]),wy[y]);
       }
     }
   };
@@ -174,21 +174,49 @@ void ds_compose(uint32_t* out,const DsArrangement& a,const uint32_t* top,const u
     }
   }
   if(kept){kept->held=still;kept->a=a;kept->field=fieldRevision;}
-  const uint32_t* background=a.useField&&field?field:top;
-  // A small box blur for exposed margins; field-backed modal scenes stay sharp.
-  const bool fullTop=a.top.x==0&&a.top.y==0&&a.top.w==512&&a.top.h==384&&!a.modal&&!a.useField;
-  if(fullTop||(a.useField&&field)){
-    // The common One Screen layout is an exact 2× copy. Fill each source
-    // pixel once and duplicate the row instead of running two scaled blits.
+  // The screen the picture is drawn from: a field behind its popup, the top screen, or the bottom screen when that is
+  // the only one shown.
+  const uint32_t* background=a.useField&&field?field:(a.top.w<=0&&a.touch.w>0&&bottom?bottom:top);
+  // A small box blur for exposed margins; field-backed modal scenes stay sharp. A desktop window's canvas is not the
+  // DS's own 4:3, so the fill is scaled to cover it and cropped at its middle.
+  const bool fullTop=a.top.x==0&&a.top.y==0&&a.top.w==outW&&a.top.h==outH&&!a.modal&&!a.useField;
+  auto cover_fill=[&](const uint32_t* src,bool blurred){
+    if(!src){std::fill_n(out,(size_t)outW*outH,0u);return;}
+    // Scale the source to cover the canvas (a window's shape need not be the DS's 4:3), cropping its middle.
+    const double s=std::max((double)outW/256.0,(double)outH/192.0);
+    const int ox=(256-std::min(256,(int)std::lround(outW/s)))/2;
+    const int oy=(192-std::min(192,(int)std::lround(outH/s)))/2;
+    std::vector<int> cols(outW);
+    for(int x=0;x<outW;++x)cols[x]=std::clamp(ox+(int)(x/s),0,255);
+    for(int y=0;y<outH;++y){
+      const uint32_t* row=src+(size_t)std::clamp(oy+(int)(y/s),0,191)*256;
+      uint32_t* to=out+(size_t)y*outW;
+      for(int x=0;x<outW;++x){
+        const uint32_t p=row[cols[x]]&0xffffff;
+        if(blurred){
+          const unsigned rr=((p>>16)&255u)*2/3,gg=((p>>8)&255u)*2/3,bb=(p&255u)*2/3;
+          to[x]=(rr<<16)|(gg<<8)|bb;
+        }else to[x]=p;
+      }
+    }
+  };
+  if(!background){
+    std::fill_n(out,(size_t)outW*outH,0u);
+  }else if(fullTop&&outW==512&&outH==384){
+    // The common One Screen layout is an exact 2× copy. Fill each source pixel once and duplicate the row instead of
+    // running two scaled blits.
     for(int y=0;y<192;++y){
       auto* row=out+y*1024;
       for(int x=0;x<256;++x)row[2*x]=row[2*x+1]=background[y*256+x]&0xffffff;
       std::copy_n(row,512,row+512);
     }
+  }else if(fullTop||(a.useField&&field)){
+    cover_fill(background,false);
   }else{
     // A 3x3 box two DS pixels apart, darkened to two thirds. Separable: sums across, then down (the same nine pixels'
-    // sum), at DS resolution, each value doubled into a 2x2 block of the frame.
+    // sum), at DS resolution, then scaled over the canvas.
     static uint32_t across[192][256][3];
+    static uint32_t blurred[192*256];
     for(int sy=0;sy<192;++sy)for(int sx=0;sx<256;++sx){
       unsigned r=0,g=0,b=0;
       for(int dx=-2;dx<=2;dx+=2){
@@ -198,16 +226,15 @@ void ds_compose(uint32_t* out,const DsArrangement& a,const uint32_t* top,const u
       across[sy][sx][0]=r;across[sy][sx][1]=g;across[sy][sx][2]=b;
     }
     for(int sy=0;sy<192;++sy){
-      auto* row=out+sy*1024;
       const auto* up=across[std::max(sy-2,0)];const auto* mid=across[sy];const auto* down=across[std::min(sy+2,191)];
       for(int sx=0;sx<256;++sx){
         const unsigned r=up[sx][0]+mid[sx][0]+down[sx][0],g=up[sx][1]+mid[sx][1]+down[sx][1],b=up[sx][2]+mid[sx][2]+down[sx][2];
-        row[2*sx]=row[2*sx+1]=((r/9*2/3)<<16)|((g/9*2/3)<<8)|(b/9*2/3);
+        blurred[sy*256+sx]=((r/9)<<16)|((g/9)<<8)|(b/9);
       }
-      std::copy_n(row,512,row+512);
     }
+    cover_fill(blurred,true);
   }
-  pd_canvas c;pd_canvas_init(&c,512,384,out);
+  pd_canvas c;pd_canvas_init(&c,outW,outH,out);
   auto frame=[&](DsRect r){
     pd_round_rect(&c,r.x-5,r.y-5,r.w+10,r.h+10,3,0x303840);
     pd_round_rect(&c,r.x-3,r.y-3,r.w+6,r.h+6,2,0xf8f8f8);
@@ -221,11 +248,11 @@ void ds_compose(uint32_t* out,const DsArrangement& a,const uint32_t* top,const u
     auto dim=[&](int x,int y,int w,int h){
       if(w<=0||h<=0)return;
       pd_canvas part;pd_canvas_init(&part,w,1,out);
-      for(int row=y;row<y+h;++row){part.px=out+row*512+x;pd_dim(&part,130);}
+      for(int row=y;row<y+h;++row){part.px=out+row*outW+x;pd_dim(&part,130);}
     };
     const DsRect t=a.touch;
-    const int ty=std::clamp(t.y,0,384),tb=std::clamp(t.y+t.h,0,384),tx=std::clamp(t.x,0,512),tr=std::clamp(t.x+t.w,0,512);
-    dim(0,0,512,ty);dim(0,tb,512,384-tb);dim(0,ty,tx,tb-ty);dim(tr,ty,512-tr,tb-ty);
+    const int ty=std::clamp(t.y,0,outH),tb=std::clamp(t.y+t.h,0,outH),tx=std::clamp(t.x,0,outW),tr=std::clamp(t.x+t.w,0,outW);
+    dim(0,0,outW,ty);dim(0,tb,outW,outH-tb);dim(0,ty,tx,tb-ty);dim(tr,ty,outW-tr,tb-ty);
     frame(a.touch);
   }else if(a.touch.w>0&&a.top.w==512)frame(a.touch);
   if(!a.floating && overlay)overlay(out);

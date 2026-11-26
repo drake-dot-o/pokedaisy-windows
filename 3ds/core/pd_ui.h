@@ -83,6 +83,7 @@ struct pd_settings {
     int tabBar;      // TAB BAR: a bit per enum pd_tab on the bar (PARTY .. DEX, CARD); the rest open from MORE
     bool showPerf;   // FPS / CPU in the corner of the game (hosts with hasPerf)
     bool hud;        // HUD over the overworld (hosts with hasHud) ...
+    bool statusBar;  // STATUS BAR over the game: its name / place / money, the time and the battery (hosts that draw it)
     int hudHidden;   // ... less these parts: a bit per enum pd_hud_part
     int hudLayout;   // enum pd_hud_layout (the app's FieldHudLayout)
     int hudLook;     // enum pd_hud_look (FieldHudLook)
@@ -561,6 +562,7 @@ struct pd_ui {
     int settingsNavId, settingsNavCount, settingsNavHeight;
     struct { int id, top; } settingsNav[PD_UI_MAX_HITS];
     int settingsScroll; // SETTINGS' list, in canvas pixels
+    int overlayScroll;  // the open TAB BAR / HUD toggle page's list, in canvas pixels
     struct pd_settings* settings;
     enum pd_action action;
     int actionSlot;

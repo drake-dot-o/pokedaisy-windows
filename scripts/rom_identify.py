@@ -89,17 +89,17 @@ def repo_titles() -> dict[str, str]:
     titles: dict[str, str] = {}
     compat = REPO / "website" / "src" / "data" / "compat.json"
     if compat.exists():
-        titles.update(json.loads(compat.read_text()).get("titles", {}))
+        titles.update(json.loads(compat.read_text(encoding="utf-8")).get("titles", {}))
     consts = dict(re.findall(r'val\s+(\w+)\s*=\s*"([0-9a-f]{40})"', git("grep", "-hE", r'val\s+\w+\s*=\s*"[0-9a-f]{40}"',
                                                                             "--", "app/src/main")))
-    text = (REPO / "app/src/main/kotlin/com/pokedaisy/app/GameTitles.kt").read_text()
+    text = (REPO / "app/src/main/kotlin/com/pokedaisy/app/GameTitles.kt").read_text(encoding="utf-8")
     for key, title in re.findall(r'([\w.]+|"[0-9a-f]{40}")\s+to\s+"([^"]+)"', text):
         sha = key.strip('"') if key.startswith('"') else consts.get(key.split(".")[-1])
         if sha:
             titles.setdefault(sha, title)
     ports = REPO / "gamedata" / "nds" / "ports.toml"
     if ports.exists():
-        for title, sha in re.findall(r'title = "([^"]+)"\nsha1 = "([0-9a-f]{40})"', ports.read_text()):
+        for title, sha in re.findall(r'title = "([^"]+)"\nsha1 = "([0-9a-f]{40})"', ports.read_text(encoding="utf-8")):
             titles.setdefault(sha, title)
     return titles
 
@@ -113,13 +113,13 @@ def header_support() -> dict[str, set[tuple[str, int]]]:
     out = {"NDS": set(), "GBA": set()}
     compat = REPO / "website" / "src" / "data" / "compat.json"
     if compat.exists():
-        d = json.loads(compat.read_text())
+        d = json.loads(compat.read_text(encoding="utf-8"))
         out["NDS"] |= {(r["code"], r["rev"]) for r in d.get("ds", [])}
         DS_TITLES.update({(r["code"], r["rev"]): r["title"] for r in d.get("ds", [])})
         out["GBA"] |= {(r["code"], v) for r in d.get("retail", []) for v in r.get("revs", [])}
     ports = REPO / "gamedata" / "nds" / "ports.toml"
     if ports.exists():
-        out["NDS"] |= {(c, int(r)) for c, r in re.findall(r'code = "(\w{4})"\nrev = (\d+)', ports.read_text())}
+        out["NDS"] |= {(c, int(r)) for c, r in re.findall(r'code = "(\w{4})"\nrev = (\d+)', ports.read_text(encoding="utf-8"))}
     return out
 
 
@@ -142,7 +142,7 @@ def config_files(sha1: str, title: str, file_name: str) -> list[str]:
 
 def host_roms() -> list[dict]:
     rows = []
-    for line in (REPO / "scripts" / "host_roms.conf").read_text().splitlines():
+    for line in (REPO / "scripts" / "host_roms.conf").read_text(encoding="utf-8").splitlines():
         if not line.strip() or line.startswith("#"):
             continue
         parts = line.split("|")
@@ -156,7 +156,7 @@ def host_roms() -> list[dict]:
 def load_cache() -> dict[str, str]:
     cache = {}
     if CACHE.exists():
-        for line in CACHE.read_text().splitlines():
+        for line in CACHE.read_text(encoding="utf-8").splitlines():
             parts = line.split("\t")
             if len(parts) == 2:
                 cache[parts[0]] = parts[1]

@@ -118,6 +118,10 @@ static const struct PkWideRom* findDerived(uint32_t crc) {
 
 /** WIDE's table for the ROM; the pending hacks too in verify_wide.py's build (PK_WIDE_PENDING). */
 static const struct PkWideRom* lookup(uint32_t crc) {
+    // Heart and Soul Legends: its map is ringed by the sea, so the wide strips would show that water at the
+    // screen's edges. It stays 4:3 (the host letterboxes it); its field row is in PK_FIELD_ONLY_ROMS, and
+    // this also keeps it 4:3 in the PK_WIDE_PENDING build.
+    if (crc == 0x9f6fb948) return NULL;
     const struct PkWideRom* rom = FIND(PK_WIDE_ROMS, crc);
 #ifdef PK_WIDE_PENDING
     if (!rom) rom = FIND(PK_FIELD_ONLY_ROMS, crc);
@@ -723,7 +727,10 @@ static int blockIn(const struct Snap* s, int x, int y, int* conn, bool real) {
     bool outside = lx < 0 || ly < 0 || lx >= s->width || ly >= s->height;
     bool inVmap = x >= 0 && x < s->vw && y >= 0 && y < s->vh;
     if (inVmap) b = s->vmap[x + s->vw * y];
-    if (outside && (!inVmap || !real)) {
+    // The margins take what the VMap has first: it holds the game's own stitched border and connection strips (the
+    // tiles the game draws at the screen's edge), so the wide window goes on with those rather than a neighbour's
+    // map data - which past a border used to show that map's sea where the game shows its trees.
+    if (outside && (!inVmap || (!real && b == mask))) {
         // A connected map's cell: beside the current map, then one step further.
         for (int i = 0; i < s->nconn; i++) {
             const struct Conn* k = &s->conn[i];

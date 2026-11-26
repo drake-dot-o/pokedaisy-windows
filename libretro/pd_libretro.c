@@ -792,6 +792,21 @@ static bool polished_potion(int item) {
 
 static void snapshot(void) { pd_snapshot_read(&snap, &game, pd_lr_read_memory, core); }
 
+/* The status bar's facts for a host that draws it (PD_ENV_SET_STATUS_BAR): the same snapshot the companion and HUD
+ * read, sent every frame; the host keeps its own clock and battery. */
+static void send_status_bar(void) {
+  if (!realEnv)
+    return;
+  struct pd_status_bar st;
+  memset(&st, 0, sizeof st);
+  st.title = game.title;
+  st.place = snap.mapsec >= 0 ? pd_mapsec_name(&game, snap.mapsec) : NULL;
+  st.money = snap.money >= 0 ? (int)snap.money : -1;
+  st.enabled = settings.statusBar;
+  st.active = haveGame && !companion && !quickOpen;
+  realEnv(PD_ENV_SET_STATUS_BAR, &st);
+}
+
 /* pk_flight told the profile's words with FLY ON's vehicle (again only when it changed). */
 static void flight_configure_words(void) {
   if (!flightWords)
@@ -1625,6 +1640,11 @@ RETRO_API void retro_unload_game(void) {
     memset(&off, 0, sizeof off);
     realEnv(PD_ENV_SET_HUD, &off);
     hudHost = false;
+  }
+  if (realEnv) {
+    struct pd_status_bar off;
+    memset(&off, 0, sizeof off);
+    realEnv(PD_ENV_SET_STATUS_BAR, &off);
   }
   mgba_retro_unload_game();
   free(cvs);
@@ -2618,6 +2638,7 @@ RETRO_API void retro_run(void) {
     }
     realEnv(PD_ENV_SET_HUD, &hud);
   }
+  send_status_bar();
   present();
   haveGameFrame = !companion && !quickOpen && !hudFocus;
   PF_T(td2);

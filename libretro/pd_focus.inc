@@ -228,6 +228,8 @@ static bool centre_in(const struct pd_hit *l, const struct pd_hit *t) {
 static int *list_scroll(struct pd_ui *u) {
   if (u->overlay == PD_OVERLAY_PLACES)
     return &u->placesScroll;
+  if (u->overlay == PD_OVERLAY_HUD || u->overlay == PD_OVERLAY_TAB_BAR)
+    return &u->overlayScroll;
   if (u->overlay != PD_OVERLAY_NONE)
     return NULL;
   return u->tab == PD_TAB_BAG ? &u->bagScroll : u->tab == PD_TAB_DEX ? &u->dexScroll : u->tab == PD_TAB_GUIDE ? &u->guideScroll

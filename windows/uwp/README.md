@@ -59,7 +59,7 @@ Package identity: `PokeDaisy.UwpHost_5wqf515wt4wy6`, publisher
 LocalState is keyed by.
 
 An update needs a higher `Version` in `windows/uwp/app/AppxManifest.xml` than
-the installed package (`1.0.0.7` now). Registering the new layout updates the
+the installed package (`1.0.0.28` now). Registering the new layout updates the
 package in place and keeps LocalState.
 
 Game data:
@@ -79,6 +79,19 @@ paths are saved as `rom_dir=` and `save_dir=` in `host.ini`; save states go in a
 paths, so the package needs `broadFileSystemAccess` in its manifest (the build
 adds it). On a PC, the first start may ask for file system permission: allow it
 under Windows Settings, Privacy and security, File system.
+
+**RETROACHIEVEMENTS** at the top of SETTINGS opens the account page: sign in
+with a RetroAchievements username and password, turn notifications on or off,
+and see the running game's achievements. The account is kept in `ra.ini` beside
+`host.ini`; the password is only used for the sign in. The manifest's
+`internetClient` capability lets rc_client reach the RetroAchievements server.
+
+The companion's **SETTINGS > HUD** page has **STATUS BAR**: a strip drawn over
+the top of the game with its name and place, money where the game has it, the
+local time and the battery. The game keeps its own size and position underneath.
+The switch is saved in the game's `pokedaisy/settings.ini` (`statusbar=0/1`) and
+is on by default. The UWP battery reading uses `Windows.System.Power`; a device
+without a battery (an Xbox) simply has no battery figure.
 
 ## Signing
 

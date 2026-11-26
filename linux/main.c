@@ -9,6 +9,7 @@
 #include "display_filter.h"
 #include "pd_canvas.h"
 #include "pd_menu.h"
+#include "status_bar.h"
 #include <SDL.h>
 #include <dirent.h>
 #ifdef _WIN32
@@ -32,6 +33,12 @@
 #include "pd_env.h"
 
 #include "library.h"
+
+#ifdef PD_RETROACHIEVEMENTS
+#include "../windows/ra.h"
+#include "rc_consoles.h"
+#include "rc_libretro.h"
+#endif
 
 /* The cores' file ending: dlopen'd .so objects on Linux, .dll on Windows. */
 #ifdef _WIN32
@@ -163,6 +170,12 @@ static int kbKeys[KB_COUNT] = {SDLK_z,   SDLK_x,       SDLK_TAB,  SDLK_f,     SD
                                SDLK_ESCAPE, SDLK_SPACE, SDLK_r,   SDLK_F2,    SDLK_F4};
 static int kbCapture = -1; // the KEYBOARD page's row waiting for a key, -1 none
 static int lastKey;        // the key that went down this frame (that page reads it)
+#ifdef PD_RETROACHIEVEMENTS
+static bool raPromptInput; // the RetroAchievements prompt is taking text
+#endif
+#if defined(PD_UWP) && defined(PD_RETROACHIEVEMENTS)
+static bool gamePastePending; // a WinRT clipboard read is running for the in-game prompt
+#endif
 static int keyboard(SDL_Keycode k) {
   for (int i = 0; i < KB_COUNT; i++)
     if (kbKeys[i] && kbKeys[i] == (int)k)
@@ -419,6 +432,51 @@ static void script_rawkeys(void) {
     }
   }
 }
+static void paste_prompt(void) {
+#ifdef PD_RETROACHIEVEMENTS
+  if (raPromptInput) {
+#ifdef PD_UWP
+    pd_uwp_clipboard_request();
+    gamePastePending = true;
+#else
+    char *text = SDL_GetClipboardText();
+    if (text) {
+      pd_ra_prompt_text(text);
+      SDL_free(text);
+    }
+#endif
+    return;
+  }
+#endif
+  library_ra_paste();
+}
+
+#ifdef PD_UWP
+static void paste_poll(void) {
+  char text[4096];
+  int result = pd_uwp_clipboard_poll(text, sizeof text);
+  if (result > 0) {
+#ifdef PD_RETROACHIEVEMENTS
+    if (gamePastePending) {
+      pd_ra_prompt_text(text);
+      gamePastePending = false;
+    } else
+#endif
+      library_ra_paste_text(text);
+  } else if (result < 0) {
+#ifdef PD_RETROACHIEVEMENTS
+    gamePastePending = false;
+#endif
+  }
+}
+#endif
+
+static bool prompt_paste_key(const SDL_KeyboardEvent *key) {
+  if (key->keysym.sym == SDLK_v && (key->keysym.mod & KMOD_CTRL))
+    return true;
+  return key->keysym.sym == SDLK_INSERT && (key->keysym.mod & KMOD_SHIFT);
+}
+
 static void events(void) {
   pressed = 0;
   lastKey = 0;
@@ -435,10 +493,25 @@ static void events(void) {
       controller_added(e.cdevice.which);
     if (e.type == SDL_CONTROLLERDEVICEREMOVED)
       controller_removed(e.cdevice.which);
-    if (e.type == SDL_KEYDOWN && kbCapture >= 0)
-      lastKey = (int)e.key.keysym.sym; // the KEYBOARD page's next key: the game sees nothing of it
-    else if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) && !e.key.repeat)
-      key(keyboard(e.key.keysym.sym), e.type == SDL_KEYDOWN);
+    bool promptOpen = library_ra_prompt();
+#ifdef PD_RETROACHIEVEMENTS
+    promptOpen = promptOpen || raPromptInput;
+#endif
+    if (e.type == SDL_KEYDOWN && promptOpen && prompt_paste_key(&e.key)) {
+      paste_prompt();
+      continue;
+    }
+    if (e.type == SDL_KEYDOWN && (kbCapture >= 0 || promptOpen))
+      lastKey = (int)e.key.keysym.sym; // the KEYBOARD page's / prompt's next key
+    if (e.type == SDL_TEXTINPUT && promptOpen) {
+#ifdef PD_RETROACHIEVEMENTS
+      if (raPromptInput)
+        pd_ra_prompt_text(e.text.text);
+      else
+#endif
+        library_ra_text(e.text.text);
+    } else if ((e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) && !e.key.repeat && kbCapture < 0)
+      key(keyboard(e.key.keysym.sym), e.type == SDL_KEYDOWN); // the game sees nothing while a key is being bound
     if (e.type == SDL_CONTROLLERBUTTONDOWN || e.type == SDL_CONTROLLERBUTTONUP)
       key(face(controller_button(e.cbutton.button)), e.type == SDL_CONTROLLERBUTTONDOWN);
     if (e.type == SDL_CONTROLLERAXISMOTION) {
@@ -510,6 +583,9 @@ static void events(void) {
   script_mouse();
   script_resize();
   script_keys();
+#ifdef PD_UWP
+  paste_poll();
+#endif
 }
 /* POCKET_MOUSE="TICK:X:Y[:c],...": where the cursor is (window pixels) from that tick on, ',c' clicking then, for
  * tests; the same tick numbering as POCKET_KEYS. */
@@ -622,7 +698,7 @@ static const char *key_name(int k) {
 /* ---- the host's settings (DATA/host.ini): what its menu sets ---- */
 static struct {
   int ffSpeed; // 0 = MAX (as many frames as fit), else 2..8
-  bool rewind, lcd;
+  bool rewind, lcd; // LCD FILTER
   bool swapAB; // the controller's A / B and X / Y the other way round (devices disagree on which is SDL's "A")
   int hotkey[HK_ACTIONS]; // the HOTKEYS page's button per action, -1 none
   int dsHotkey[HK_ACTIONS];
@@ -633,6 +709,14 @@ static struct {
 } hostSet = {0, false, false, false, {R2, L2, -1, -1}, {R2, L2, -1, -1}, -1, false, 0, {0}, {0}};
 static char hostIni[PATH_MAX];
 static void host_save(void);
+/* The running game's status-bar facts, from the core's PD_ENV_SET_STATUS_BAR (the host draws its own clock and
+ * battery). */
+static struct {
+  char title[96], place[64];
+  int money;
+  bool enabled, active;
+} gameStatus;
+static char statusFallbackTitle[96];
 /* A DS game's L2 / R2 are its companion and screen buttons: with no modifier held for them, its FAST FORWARD and REWIND
  * go back to the stick clicks (R3 / L3), and come back to R2 / L2 when a modifier is picked again. */
 static void ds_hotkeys_follow_modifier(void) {
@@ -959,6 +1043,43 @@ static struct {
   void *(*get_memory_data)(unsigned);
   size_t (*get_memory_size)(unsigned);
 } core;
+#ifdef PD_RETROACHIEVEMENTS
+/* The core publishes its memory map through SET_MEMORY_MAPS (the descriptors
+ * point at its own RAM): keep a copy and let rcheevos' libretro helper turn it
+ * into the console's address space. */
+static struct retro_memory_descriptor raMapDescs[32];
+static struct retro_memory_map raMap;
+static bool raMapHave;
+static rc_libretro_memory_regions_t raMemory;
+static int raConsoleId;
+static void ra_memory_info(uint32_t id, rc_libretro_core_memory_info_t *info) {
+  info->data = core.get_memory_data ? (uint8_t *)core.get_memory_data(id) : NULL;
+  info->size = info->data && core.get_memory_size ? core.get_memory_size(id) : 0;
+}
+static void ra_memory_forget(void) {
+  raMapHave = false;
+  raConsoleId = 0;
+  memset(&raMemory, 0, sizeof raMemory);
+}
+static void ra_memory_init(int console) {
+  memset(&raMemory, 0, sizeof raMemory);
+  raConsoleId = console;
+  if (console > 0)
+    rc_libretro_memory_init(&raMemory, raMapHave ? &raMap : NULL, ra_memory_info, (uint32_t)console);
+}
+static uint32_t ra_read_memory(uint32_t address, uint8_t *buffer, uint32_t num_bytes, void *ctx) {
+  (void)ctx;
+  return rc_libretro_memory_read(&raMemory, address, buffer, num_bytes);
+}
+#else
+static void ra_memory_forget(void) {}
+static void ra_memory_init(int console) { (void)console; }
+static uint32_t ra_read_memory(uint32_t address, uint8_t *buffer, uint32_t num_bytes, void *ctx) {
+  (void)address, (void)buffer, (void)num_bytes, (void)ctx;
+  return 0;
+}
+#endif
+
 static bool core_open(const char *path) {
   core.dl = dlopen(path, RTLD_NOW | RTLD_LOCAL);
   if (!core.dl) {
@@ -1002,6 +1123,7 @@ static struct {
 static int optionN;
 static char panelValue[32];
 static char windowValue[32];   // the window the picture is drawn in, whatever PANEL preset is held
+static bool wideOffRom;        // this ROM stays 4:3 (Heart and Soul Legends: EXPAND's strips show its sea)
 static bool optionsChanged;
 static void options_from(const struct retro_core_option_v2_definition *d) {
   for (optionN = 0; d && d->key && optionN < (int)(sizeof options / sizeof options[0]); d++, optionN++) {
@@ -1119,6 +1241,21 @@ static bool environment(unsigned cmd, void *data) {
   case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
   case RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS:
     return true;
+#ifdef PD_RETROACHIEVEMENTS
+  case RETRO_ENVIRONMENT_SET_MEMORY_MAPS: {
+    const struct retro_memory_map *m = (const struct retro_memory_map *)data;
+    raMapHave = false;
+    if (m && m->descriptors && m->num_descriptors && m->num_descriptors <= (unsigned)(sizeof raMapDescs / sizeof raMapDescs[0])) {
+      memcpy(raMapDescs, m->descriptors, m->num_descriptors * sizeof raMapDescs[0]);
+      raMap.descriptors = raMapDescs;
+      raMap.num_descriptors = m->num_descriptors;
+      raMapHave = true;
+      if (raConsoleId > 0)
+        ra_memory_init(raConsoleId);
+    }
+    return true;
+  }
+#endif
   case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: {
     enum retro_pixel_format f = *(const enum retro_pixel_format *)data;
     if (f != RETRO_PIXEL_FORMAT_XRGB8888 && f != RETRO_PIXEL_FORMAT_RGB565 && f != RETRO_PIXEL_FORMAT_0RGB1555)
@@ -1177,6 +1314,15 @@ static bool environment(unsigned cmd, void *data) {
       hudMsg = *h;
     return true;
   }
+  case PD_ENV_SET_STATUS_BAR: {
+    const struct pd_status_bar *s = data;
+    snprintf(gameStatus.title, sizeof gameStatus.title, "%s", s && s->title ? s->title : "");
+    snprintf(gameStatus.place, sizeof gameStatus.place, "%s", s && s->place ? s->place : "");
+    gameStatus.money = s ? s->money : -1;
+    gameStatus.enabled = s && s->enabled;
+    gameStatus.active = s && s->active;
+    return true;
+  }
   case RETRO_ENVIRONMENT_GET_THROTTLE_STATE: {
     struct retro_throttle_state *t = data;
     t->mode = rewindingNow ? RETRO_THROTTLE_REWINDING
@@ -1208,7 +1354,8 @@ static void video_refresh(const void *data, unsigned w, unsigned h, size_t pitch
 }
 /* The frame centred, at the largest scale the screen holds. The core sizes its canvas to the panel, so this is a whole
  * scale normally; where a whole one would leave the picture short of the screen (a canvas whose aspect isn't the
- * window's, or an odd panel) it fits instead, so the picture fills the screen rather than sitting in bars. */
+ * window's, or an odd panel) it fits instead, so the picture fills the screen rather than sitting in bars. The status
+ * bar draws over the top of this frame, never changing its place. */
 static SDL_Rect frame_place(int ow, int oh) {
   SDL_Rect r = {0, 0, ow, oh};
   if (frameW <= 0 || frameH <= 0)
@@ -1218,17 +1365,138 @@ static SDL_Rect frame_place(int ow, int oh) {
   double s = whole >= 1 && whole / fit >= 0.98 ? whole : fit; // whole pixels only when they fill the screen
   r.w = (int)(frameW * s + 0.5);
   r.h = (int)(frameH * s + 0.5);
-  if (s == whole) {
-    // A whole scale a pixel or three short of the screen would show as a thin bar down one side: cover it instead (the
-    // stretch is a fraction of a pixel in a texel, invisible next to the bar).
-    if (r.w < ow && ow - r.w <= 4)
-      r.w = ow;
-    if (r.h < oh && oh - r.h <= 4)
-      r.h = oh;
-  }
+  // A pixel or three short of the screen (a core's canvas rounded to another shape) would show as a thin bar down one
+  // side: cover it instead (the stretch is a fraction of a pixel in a texel, invisible next to the bar).
+  if (r.w < ow && ow - r.w <= 4)
+    r.w = ow;
+  if (r.h < oh && oh - r.h <= 4)
+    r.h = oh;
   r.x = (ow - r.w) / 2;
   r.y = (oh - r.h) / 2;
   return r;
+}
+
+/* The frame below the status bar's strip, covering the rest of the screen: no bars at the sides. The frame keeps its
+ * aspect and may run a few pixels past the bottom edge, as a 16:9 canvas fills a 16:10 window. */
+static SDL_Rect frame_place_below(int ow, int oh, int top) {
+  SDL_Rect r = {0, top, ow, oh - top};
+  if (frameW <= 0 || frameH <= 0)
+    return r;
+  double fitW = ow / (double)frameW, fitH = (oh - top) / (double)frameH;
+  double s = fitW > fitH ? fitW : fitH;
+  r.w = (int)(frameW * s + 0.5);
+  r.h = (int)(frameH * s + 0.5);
+  r.x = (ow - r.w) / 2;
+  r.y = top;
+  return r;
+}
+
+/* The in-game status bar (status_bar.c): the game's name / place / money, then the host's clock and battery. */
+#define STATUS_BAR_H PD_STATUS_BAR_HEIGHT
+static uint32_t statusPx[1024 * STATUS_BAR_H];
+static SDL_Texture *statusTexture;
+static int statusTextureW;
+static char statusDrawnKey[512];
+
+#if defined(PD_UWP)
+extern int pd_uwp_battery(int *charging);
+#endif
+static int status_battery(int *charging) {
+  *charging = 0;
+#if defined(PD_UWP)
+  return pd_uwp_battery(charging);
+#elif defined(_WIN32)
+  SYSTEM_POWER_STATUS power;
+  if (GetSystemPowerStatus(&power) && power.BatteryLifePercent != 255) {
+    *charging = power.ACLineStatus == 1;
+    return power.BatteryLifePercent;
+  }
+#else
+  for (int i = 0; i < 4; i++) {
+    char path[64];
+    snprintf(path, sizeof path, "/sys/class/power_supply/BAT%d/capacity", i);
+    FILE *f = fopen(path, "r");
+    if (!f)
+      continue;
+    int pct = -1;
+    if (fscanf(f, "%d", &pct) != 1)
+      pct = -1;
+    fclose(f);
+    if (pct < 0)
+      continue;
+    snprintf(path, sizeof path, "/sys/class/power_supply/BAT%d/status", i);
+    if ((f = fopen(path, "r"))) {
+      char state[24] = {0};
+      if (fgets(state, sizeof state, f))
+        *charging = strncmp(state, "Charging", 8) == 0;
+      fclose(f);
+    }
+    return pct;
+  }
+#endif
+  return -1;
+}
+static void status_clock(char *out, size_t size) {
+  time_t now = time(NULL);
+  struct tm *tm = localtime(&now);
+  if (tm)
+    strftime(out, size, "%H:%M", tm);
+  else
+    snprintf(out, size, "--:--");
+}
+static void status_present(const SDL_Rect *frame, int scale, int y) {
+  if (!renderer || !frame || frame->w <= 0 || frame->h <= 0)
+    return;
+  int w = frame->w / scale;
+  if (w < 160) {
+    scale = 1;
+    w = frame->w;
+  }
+  if (w > 1024)
+    w = 1024;
+  // The battery and the minute change slowly: sample them a second at a time, not every frame.
+  static Uint32 batteryAt;
+  static int battery = -2, charging;
+  if (battery == -2 || SDL_GetTicks() - batteryAt >= 1000) {
+    battery = status_battery(&charging);
+    batteryAt = SDL_GetTicks();
+  }
+  char clock[8];
+  status_clock(clock, sizeof clock);
+  const char *title = gameStatus.title[0] ? gameStatus.title : statusFallbackTitle;
+  const char *place = gameStatus.active ? gameStatus.place : "";
+  const int money = gameStatus.active ? gameStatus.money : -1;
+  char key[512];
+  snprintf(key, sizeof key, "%s|%s|%d|%s|%d|%d|%d", title, place, money, clock, battery, charging, w);
+  if (!statusTexture || statusTextureW != w || strcmp(key, statusDrawnKey)) {
+    struct pd_canvas c;
+    pd_canvas_init(&c, w, STATUS_BAR_H, statusPx);
+    const struct status_bar_info info = {title, place, money, clock, battery, charging};
+    status_bar_draw(&c, &info);
+    for (int i = 0; i < w * STATUS_BAR_H; i++)
+      statusPx[i] |= 0xFF000000u;
+    if (statusTexture && statusTextureW != w) {
+      SDL_DestroyTexture(statusTexture);
+      statusTexture = NULL;
+    }
+    if (!statusTexture) {
+      statusTexture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, STATUS_BAR_H);
+      if (statusTexture) {
+        SDL_SetTextureBlendMode(statusTexture, SDL_BLENDMODE_NONE);
+        SDL_SetTextureScaleMode(statusTexture, SDL_ScaleModeNearest);
+      }
+    }
+    statusTextureW = w;
+    if (statusTexture)
+      SDL_UpdateTexture(statusTexture, NULL, statusPx, w * 4);
+    snprintf(statusDrawnKey, sizeof statusDrawnKey, "%s", key);
+  }
+  if (statusTexture) {
+    SDL_Rect dst = {frame->x, y, w * scale, STATUS_BAR_H * scale};
+    if (dst.y < 0)
+      dst.y = 0;
+    SDL_RenderCopy(renderer, statusTexture, NULL, &dst);
+  }
 }
 
 /* The overlay (notices, the host menu, the game list): a canvas at the largest whole scale that keeps it at least
@@ -1320,37 +1588,30 @@ static void present_game(const struct pd_menu *menu) {
   int ow = W, oh = H;
   SDL_GetRendererOutputSize(renderer, &ow, &oh);
   SDL_RenderClear(renderer);
-  frameRect = frame_place(ow, oh);
+  int statusScale = 0, statusH = 0;
+  if (gameStatus.enabled && gameStatus.active) {
+    statusScale = pd_status_bar_scale(oh);
+    statusH = pd_status_bar_height(oh);
+  }
+  // The bar owns the top strip while it is on: the game starts below it, so the game's own map-name banner or menu is
+  // never under the bar. The core's canvas is untouched; when the frame still fits the remaining screen it keeps its size.
+  frameRect = statusH ? frame_place_below(ow, oh, statusH) : frame_place(ow, oh);
   if (frameTexture && frameW > 0) {
     SDL_Rect src = {0, 0, frameW, frameH};
     SDL_FRect dst = {(float)frameRect.x, (float)frameRect.y, (float)frameRect.w, (float)frameRect.h};
     SDL_RenderCopyF(renderer, frameTexture, &src, &dst);
   }
-  // The core's touch panel: its full 256 x 192 bottom screen, scaled once, here, to the panel's place in the output.
-  if (panelActive && panelMsg.pixels && frameW > 0 && frameH > 0) {
-    if (!panelTexture || panelTexW != panelMsg.src_w || panelTexH != panelMsg.src_h) {
-      if (panelTexture)
-        SDL_DestroyTexture(panelTexture);
-      panelTexture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
-                                        panelMsg.src_w, panelMsg.src_h);
-      panelTexW = panelMsg.src_w;
-      panelTexH = panelMsg.src_h;
-      if (panelTexture) {
-        SDL_SetTextureBlendMode(panelTexture, SDL_BLENDMODE_NONE);
-        SDL_SetTextureScaleMode(panelTexture, SDL_ScaleModeNearest);
-      }
-    }
-    if (panelTexture) {
-      SDL_UpdateTexture(panelTexture, NULL, panelMsg.pixels, panelMsg.src_w * 4);
-      float sx = (float)frameRect.w / (float)frameW, sy = (float)frameRect.h / (float)frameH;
-      SDL_FRect dst = {(float)frameRect.x + panelMsg.x * sx, (float)frameRect.y + panelMsg.y * sy,
-                       panelMsg.w * sx, panelMsg.h * sy};
-      SDL_RenderCopyF(renderer, panelTexture, NULL, &dst);
-    }
-  }
   // The core's field HUD, from its own 256 x 192 picture: the frame's canvas is scaled to the window, and at a ZOOM step a
   // HUD blended into the canvas would be resampled with the picture. Drawn here it keeps the window's pixels at every step.
   if (hudActive && hudMsg.pixels && hudMsg.src_w > 0 && hudMsg.src_h > 0 && frameW > 0 && frameH > 0) {
+    // With the status bar on, the game frame fills the width and can run past the bottom edge by a few pixels. The HUD is
+    // not the game: its bottom row stays on the window's bottom edge (and its top just under the bar), so no part of it is
+    // pushed out of the picture.
+    SDL_Rect hudRect = frameRect;
+    if (statusH) {
+      hudRect.y = statusH;
+      hudRect.h = oh - statusH;
+    }
     if (!hudTexture || hudTexW != hudMsg.src_w || hudTexH != hudMsg.src_h) {
       if (hudTexture)
         SDL_DestroyTexture(hudTexture);
@@ -1365,8 +1626,8 @@ static void present_game(const struct pd_menu *menu) {
     }
     if (hudTexture) {
       SDL_UpdateTexture(hudTexture, NULL, hudMsg.pixels, hudMsg.src_w * 4);
-      const float sx = (float)frameRect.w / (float)frameW, sy = (float)frameRect.h / (float)frameH;
-      const float bx = (float)frameRect.x + hudMsg.x * sx, by = (float)frameRect.y + hudMsg.y * sy;
+      const float sx = (float)hudRect.w / (float)frameW, sy = (float)hudRect.h / (float)frameH;
+      const float bx = (float)hudRect.x + hudMsg.x * sx, by = (float)hudRect.y + hudMsg.y * sy;
       const float bw = hudMsg.w * sx, bh = hudMsg.h * sy;
       // SMALL / NORMAL: each quarter of the picture at its own corner of the box, a quarter of the box's size, as the core's
       // in-canvas blend places it. Drawn from the picture's own pixels in one go, a quarter is as sharp here as at 2x.
@@ -1386,7 +1647,45 @@ static void present_game(const struct pd_menu *menu) {
       }
     }
   }
+  // The core's touch panel: its full 256 x 192 bottom screen, scaled once, here, to the panel's place in the output. Drawn
+  // after the HUD, the game's bottom screen stays whole over it (large + small and picture in picture keep their corner).
+  if (panelActive && panelMsg.pixels && frameW > 0 && frameH > 0) {
+    if (!panelTexture || panelTexW != panelMsg.src_w || panelTexH != panelMsg.src_h) {
+      if (panelTexture)
+        SDL_DestroyTexture(panelTexture);
+      panelTexture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+                                        panelMsg.src_w, panelMsg.src_h);
+      panelTexW = panelMsg.src_w;
+      panelTexH = panelMsg.src_h;
+      if (panelTexture) {
+        SDL_SetTextureBlendMode(panelTexture, SDL_BLENDMODE_NONE);
+        SDL_SetTextureScaleMode(panelTexture, SDL_ScaleModeNearest);
+      }
+    }
+    if (panelTexture) {
+      SDL_UpdateTexture(panelTexture, NULL, panelMsg.pixels, panelMsg.src_w * 4);
+      float sx = (float)frameRect.w / (float)frameW, sy = (float)frameRect.h / (float)frameH;
+      SDL_FRect dst = {(float)frameRect.x + panelMsg.x * sx, (float)frameRect.y + panelMsg.y * sy,
+                       panelMsg.w * sx, panelMsg.h * sy};
+      // The panel's frame, over the HUD too: it sits outside the core's 256 x 192 picture, so in picture in picture the
+      // HUD's bottom-right buttons would otherwise print over the frame beside the panel. The frame is drawn round the
+      // picture first and the picture covers its inside. The core leaves the frame to this host when it draws the
+      // native panel.
+      float ring = dst.w * 5.0f / 256.0f;
+      if (ring < 2.0f)
+        ring = 2.0f;
+      SDL_FRect outer = {dst.x - ring, dst.y - ring, dst.w + 2 * ring, dst.h + 2 * ring};
+      SDL_SetRenderDrawColor(renderer, 0x30, 0x38, 0x40, 255);
+      SDL_RenderFillRectF(renderer, &outer);
+      SDL_FRect inner = {dst.x - ring * 0.6f, dst.y - ring * 0.6f, dst.w + 1.2f * ring, dst.h + 1.2f * ring};
+      SDL_SetRenderDrawColor(renderer, 0xF8, 0xF8, 0xF8, 255);
+      SDL_RenderFillRectF(renderer, &inner);
+      SDL_RenderCopyF(renderer, panelTexture, NULL, &dst);
+    }
+  }
   render_lcd();
+  if (statusScale)
+    status_present(&frameRect, statusScale, 0);
   bool any = false;
   overlay_begin();
   if (menu) {
@@ -1713,6 +2012,12 @@ static void panel_follow(void) {
   else
     snprintf(v, sizeof v, "%dx%d", ow, oh);
   snprintf(windowValue, sizeof windowValue, "%dx%d", ow, oh);
+  // Heart and Soul Legends: its map is ringed by the sea, so EXPAND's margins would show that water at the
+  // screen's edges. Tell the core the panel is the GBA's own 4:3 and the host letterboxes it (black bars).
+  if (wideOffRom) {
+    snprintf(v, sizeof v, "%dx%d", 240, 160);
+    snprintf(windowValue, sizeof windowValue, "%dx%d", 240, 160);
+  }
   if (strcmp(v, panelValue)) {
     snprintf(panelValue, sizeof panelValue, "%s", v);
     optionsChanged = true;
@@ -1724,14 +2029,22 @@ static bool state_file(const char *ss, bool save) {
     void *d = n ? malloc(n) : NULL;
     bool ok = d && core.serialize(d, n) && write_file(ss, d, n, false);
     free(d);
+#ifdef PD_RETROACHIEVEMENTS
+    if (ok)
+      pd_ra_save_progress(ss);
+#endif
     return ok;
   }
   size_t n;
   unsigned char *d = read_file(ss, &n, 64u << 20);
   bool ok = d && core.unserialize(d, n);
   free(d);
-  if (ok)
+  if (ok) {
     rewind_clear(); // its differences lead back from another history
+#ifdef PD_RETROACHIEVEMENTS
+    pd_ra_load_progress(ss);
+#endif
+  }
   return ok;
 }
 /* The .sav: the core's save memory, then its cartridge clock (RETRO_MEMORY_RTC: a Game Boy MBC3's, Crystal's) right
@@ -1855,10 +2168,37 @@ static bool pokemon_rom(const char *path) {
 extern int pd_ds_run(const char *, const char *, int, const char *, SDL_Renderer *, bool (*)(void));
 static bool ds_running(void) { return running != 0; }
 #endif
+#ifdef PD_RETROACHIEVEMENTS
+static int ra_console_for(const char *coreName, const char *path, const unsigned char *rom, size_t romSize) {
+  if (strstr(coreName, "_gba_"))
+    return RC_CONSOLE_GAMEBOY_ADVANCE;
+  if (strstr(coreName, "_ds_"))
+    return RC_CONSOLE_NINTENDO_DS;
+  if (strstr(coreName, "_gbc_")) {
+    unsigned char header = 0;
+    if (rom && romSize > 0x143)
+      header = rom[0x143];
+    else {
+      FILE *f = fopen(path, "rb");
+      if (f) {
+        if (fseek(f, 0x143, SEEK_SET) == 0) {
+          int c = fgetc(f);
+          if (c != EOF)
+            header = (unsigned char)c;
+        }
+        fclose(f);
+      }
+    }
+    return (header & 0x80) ? RC_CONSOLE_GAMEBOY_COLOR : RC_CONSOLE_GAMEBOY;
+  }
+  return 0;
+}
+#endif
 // The host menu's rows, top to bottom (fast-forward is the FAST FORWARD hotkey's, held).
-enum { M_RESUME, M_SAVE, M_LOAD, M_HOTKEYS, M_KEYBOARD, M_REWIND, M_FFSPEED, M_LCD, M_SWAP, M_QUIT,
+enum { M_RESUME, M_SAVE, M_LOAD, M_HOTKEYS, M_KEYBOARD, M_REWIND, M_FFSPEED, M_LCD, M_SWAP, M_RETROACHIEVEMENTS, M_QUIT,
        M_COUNT };
 static void run_game(const char *path, int maxFrames, const char *shot, bool fromList) {
+  wideOffRom = path && strstr(path, "hns-legends") != NULL;
 #ifdef POCKET_DSPERATE
   const char *ext = strrchr(path, '.');
   if (ext && !strcasecmp(ext, ".nds")) {
@@ -1903,6 +2243,13 @@ static void run_game(const char *path, int maxFrames, const char *shot, bool fro
     name = back;
 #endif
   name = name ? name + 1 : path;
+  memset(&gameStatus, 0, sizeof gameStatus);
+  gameStatus.money = -1;
+  snprintf(statusFallbackTitle, sizeof statusFallbackTitle, "%s", name);
+  char *statusDot = strrchr(statusFallbackTitle, '.');
+  if (statusDot)
+    *statusDot = 0;
+  statusDrawnKey[0] = 0;
   char sav[PATH_MAX * 2], ss[PATH_MAX * 2], backups[PATH_MAX * 2];
   if (saveFile) {
     snprintf(sav, sizeof sav, "%s", saveFile);
@@ -1943,6 +2290,7 @@ static void run_game(const char *path, int maxFrames, const char *shot, bool fro
   core.set_input_poll(input_poll);
   core.set_input_state(input_state);
   struct retro_game_info info = {path, rom, romSize, NULL};
+  ra_memory_forget(); // a map from the last game must not outlive it
   if (!core.load_game(&info)) {
     core.deinit();
     dlclose(core.dl);
@@ -1952,6 +2300,13 @@ static void run_game(const char *path, int maxFrames, const char *shot, bool fro
     return;
   }
   core.get_system_av_info(&av);
+#ifdef PD_RETROACHIEVEMENTS
+  {
+    int console = ra_console_for(coreName, path, rom, romSize);
+    ra_memory_init(console);
+    pd_ra_game_start(console, path);
+  }
+#endif
   srcRate = av.timing.sample_rate > 0 ? av.timing.sample_rate : 32768;
   double hz = av.timing.fps > 0 ? av.timing.fps : 59.7275;
   frameW = frameH = 0;
@@ -1975,6 +2330,11 @@ static void run_game(const char *path, int maxFrames, const char *shot, bool fro
   struct pd_menu menu, hkMenu;
   static char rows[M_COUNT][40], hkRows[HK_ACTIONS + 1][40];
   static const char *rowPtrs[M_COUNT], *hkPtrs[HK_ACTIONS + 1];
+#ifdef PD_RETROACHIEVEMENTS
+  bool raPage = false, raPrompt = false;
+  struct pd_menu raMenu, raPromptMenu;
+  static const char *raPtrs[PD_RA_MAX_ROWS], *raPromptRows[2];
+#endif
   static const char *const hkNames[HK_ACTIONS] = {"FAST FORWARD", "REWIND", "SAVE STATE", "LOAD STATE"};
   bool hkPage = false, kbPage = false;
   unsigned latched = 0, menuConsumed = 0;
@@ -2017,6 +2377,7 @@ static void run_game(const char *path, int maxFrames, const char *shot, bool fro
     snprintf(rows[M_SWAP], 40, "A/B BUTTONS  %s", hostSet.swapAB ? "SWAPPED" : "NORMAL");
     snprintf(rows[M_HOTKEYS], 40, "HOTKEYS");
     snprintf(rows[M_KEYBOARD], 40, "KEYBOARD");
+    snprintf(rows[M_RETROACHIEVEMENTS], 40, "RETROACHIEVEMENTS");
     snprintf(rows[M_QUIT], 40, fromList ? "QUIT TO GAME LIST" : "QUIT");
     for (int i = 0; i < M_COUNT; i++)
       rowPtrs[i] = rows[i];
@@ -2047,6 +2408,15 @@ static void run_game(const char *path, int maxFrames, const char *shot, bool fro
       confirming = 0;
       capturing = -1;
       kbCapture = -1;
+#ifdef PD_RETROACHIEVEMENTS
+      raPage = false;
+      raPrompt = false;
+      if (raPromptInput) {
+        raPromptInput = false;
+        SDL_StopTextInput();
+        pd_ra_prompt_cancel();
+      }
+#endif
       if (menuOpen) {
         pd_menu_init(&menu, "POKEDAISY", rowPtrs, M_COUNT);
         menu.overlay = true;
@@ -2188,6 +2558,75 @@ static void run_game(const char *path, int maxFrames, const char *shot, bool fro
         kbMenu.title = "PRESS A KEY";
         notice("Press a key. Esc: cancel   Backspace: off");
       }
+#ifdef PD_RETROACHIEVEMENTS
+    } else if (menuOpen && raPage) {
+      if (raPrompt) {
+        if (lastKey == SDLK_ESCAPE) {
+          pd_ra_prompt_cancel();
+          raPrompt = false;
+          raPromptInput = false;
+          SDL_StopTextInput();
+        } else if (lastKey == SDLK_BACKSPACE || lastKey == SDLK_DELETE) {
+          pd_ra_prompt_backspace();
+        } else if (lastKey == SDLK_RETURN || lastKey == SDLK_KP_ENTER) {
+          if (pd_ra_prompt_submit()) {
+            raPrompt = false;
+            raPromptInput = false;
+            SDL_StopTextInput();
+          }
+        }
+        if (down(B)) {
+          pd_ra_prompt_cancel();
+          raPrompt = false;
+          raPromptInput = false;
+          SDL_StopTextInput();
+        }
+        if (down(A) && pd_ra_prompt_submit()) {
+          raPrompt = false;
+          raPromptInput = false;
+          SDL_StopTextInput();
+        }
+        raPromptRows[0] = pd_ra_prompt_value();
+        raPromptRows[1] = "ENTER: OK   ESC: CANCEL";
+        pd_menu_init(&raPromptMenu, pd_ra_prompt_title(), raPromptRows, 2);
+        raPromptMenu.overlay = true;
+      } else {
+        if (down(UP))
+          pd_menu_move(&raMenu, -1);
+        if (down(DOWN))
+          pd_menu_move(&raMenu, 1);
+        if (down(B))
+          raPage = false;
+        if (down(A)) {
+          int action = pd_ra_menu_action(raMenu.selected);
+          if (action == PD_RA_ROW_SIGN_IN) {
+            pd_ra_sign_in();
+            raPrompt = true;
+            raPromptInput = true;
+            SDL_StartTextInput();
+            notice("Type, Enter: OK   Esc: cancel");
+          } else if (action == PD_RA_ROW_SIGN_OUT) {
+            pd_ra_sign_out();
+          } else if (action == PD_RA_ROW_NOTIFICATIONS) {
+            pd_ra_toggle_notifications();
+          } else {
+            char detail[256];
+            pd_ra_menu_detail(raMenu.selected, detail, sizeof detail);
+            notice(detail);
+          }
+          int n = pd_ra_menu_count();
+          for (int i = 0; i < n; i++)
+            raPtrs[i] = pd_ra_menu_row(i);
+          if (n != raMenu.count) {
+            int sel = raMenu.selected;
+            raMenu.count = n;
+            if (sel >= n)
+              sel = n - 1;
+            raMenu.selected = sel < 0 ? 0 : sel;
+          }
+        }
+      }
+#endif
     } else if (menuOpen) {
       if (down(UP))
         pd_menu_move(&menu, -1);
@@ -2244,6 +2683,21 @@ static void run_game(const char *path, int maxFrames, const char *shot, bool fro
           kbPage = true, hkPage = false;
           kb_menu_open();
           break;
+        case M_RETROACHIEVEMENTS:
+#ifdef PD_RETROACHIEVEMENTS
+          raPage = true;
+          pd_ra_menu_open();
+          {
+            int n = pd_ra_menu_count();
+            for (int i = 0; i < n; i++)
+              raPtrs[i] = pd_ra_menu_row(i);
+            pd_menu_init(&raMenu, "RETROACHIEVEMENTS", raPtrs, n);
+            raMenu.overlay = true;
+          }
+#else
+          notice("RetroAchievements is not available in this build");
+#endif
+          break;
         case M_QUIT:
           confirming = M_QUIT;
           confirmRows[0] = "CANCEL";
@@ -2254,10 +2708,39 @@ static void run_game(const char *path, int maxFrames, const char *shot, bool fro
         }
       }
     }
+#ifdef PD_RETROACHIEVEMENTS
+    if (menuFrame) {
+      pd_ra_pump();
+      const char *raPopup = pd_ra_popup();
+      if (raPopup)
+        notice(raPopup);
+      if (menuOpen && raPage && !raPrompt) {
+        int n = pd_ra_menu_count();
+        for (int i = 0; i < n; i++)
+          raPtrs[i] = pd_ra_menu_row(i);
+        if (n != raMenu.count) {
+          int sel = raMenu.selected;
+          raMenu.count = n;
+          if (sel >= n)
+            sel = n - 1;
+          raMenu.selected = sel < 0 ? 0 : sel;
+        }
+      }
+    }
+#endif
     if (menuFrame) {
       muted = true;
       gameKeys = 0;
+#ifdef PD_RETROACHIEVEMENTS
+      present_game(menuOpen ? (confirming ? &confirmMenu
+                               : hkPage  ? &hkMenu
+                               : kbPage  ? &kbMenu
+                               : raPage  ? (raPrompt ? &raPromptMenu : &raMenu)
+                                         : &menu)
+                   : NULL);
+#else
       present_game(menuOpen ? (confirming ? &confirmMenu : hkPage ? &hkMenu : kbPage ? &kbMenu : &menu) : NULL);
+#endif
       if (maxFrames && ++frames >= maxFrames) { // a scripted run can end, and be captured, with the menu up
         if (shot && !capture(shot))
           appError = 1;
@@ -2293,9 +2776,15 @@ static void run_game(const char *path, int maxFrames, const char *shot, bool fro
         core.run();
       else
         rewinding = false;
+#ifdef PD_RETROACHIEVEMENTS
+      pd_ra_frame(true); // no checks while the game runs its history backwards
+#endif
     } else {
       for (int i = 0; i < runs && running; i++) {
         core.run();
+#ifdef PD_RETROACHIEVEMENTS
+        pd_ra_frame(false);
+#endif
         wheelSteps = 0; // the core has read this frame's notches
         if (modifierPulse && --pulseLeft <= 0) {
           gameKeys &= ~joypad(modifierPulse);
@@ -2306,6 +2795,13 @@ static void run_game(const char *path, int maxFrames, const char *shot, bool fro
       }
     }
     emuMs = (double)(SDL_GetPerformanceCounter() - t) * 1000.0 / SDL_GetPerformanceFrequency() / runs;
+#ifdef PD_RETROACHIEVEMENTS
+    {
+      const char *raPopup = pd_ra_popup();
+      if (raPopup)
+        notice(raPopup);
+    }
+#endif
     if (++frames % 120 == 0)
       sram_write(sav, &sramCopy, true);
     present_game(NULL);
@@ -2330,6 +2826,9 @@ static void run_game(const char *path, int maxFrames, const char *shot, bool fro
   sram_write(sav, &sramCopy, true);
   free(sramCopy.data);
   rewind_clear();
+#ifdef PD_RETROACHIEVEMENTS
+  pd_ra_game_stop();
+#endif
   core.unload_game();
   core.deinit();
   dlclose(core.dl);
@@ -2983,8 +3482,11 @@ int main(int argc, char **argv) {
   SDL_ShowCursor(SDL_DISABLE);
 #endif
   // SDL starts text input with the window, and Steam answers it with its on-screen keyboard: the host reads keys,
-  // never text.
+  // never text. The RetroAchievements sign-in prompt turns it on while it takes a name and password.
   SDL_StopTextInput();
+#ifdef PD_RETROACHIEVEMENTS
+  pd_ra_init(root, POCKET_VERSION, ra_read_memory, NULL);
+#endif
   SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
   audio_open();
   rawTrimui = getenv("POCKET_RAW_TRIMUI") && !strcmp(getenv("POCKET_RAW_TRIMUI"), "1");
@@ -3028,7 +3530,15 @@ int main(int argc, char **argv) {
         libDown = (libDown & ~(unsigned)LIB_SELECT) | LIB_START;
       if (keyPage || folderPage) // those pages have the keys
         libDown = 0;
-      library_keys(libDown);
+      if (library_ra_prompt()) {
+        int k = lastKey;
+        lastKey = 0; // one keydown is one action: a held key must not submit twice
+        library_ra_key(k); // Enter / Esc / Backspace while the sign-in prompt is open
+      } else
+        library_keys(libDown); // typing in the prompt never reaches the rail or the pages
+#ifdef PD_RETROACHIEVEMENTS
+      pd_ra_pump(); // the login answer while the library is up
+#endif
       library_tick();
       if (libraryFolderPick) {
         folder_page_open(libraryFolderPick);
@@ -3111,6 +3621,12 @@ int main(int argc, char **argv) {
         }
         libraryClick = false;
         libraryWheel = 0;
+      } else if (library_ra_prompt()) {
+        int px = 0, py = 0;
+        if (libraryClick && key_page_pointer(&px, &py))
+          library_ra_pointer(px, py, true);
+        libraryClick = false;
+        libraryWheel = 0;
       } else if (libraryClick || libraryWheel) {
         int ow, oh, s, w, h, x0, y0;
         library_viewport(&ow, &oh, &s, &w, &h, &x0, &y0);
@@ -3132,7 +3648,7 @@ int main(int argc, char **argv) {
         libraryWheel = 0;
         library_played(picked);
       }
-      library_present(folderPage ? &folderMenu : keyPage ? &kbMenu : NULL);
+      library_present(folderPage ? &folderMenu : keyPage ? &kbMenu : library_ra_page());
       if (frames && ++ticks >= frames) {
         if (shot && !capture(shot))
           appError = 1;
@@ -3155,6 +3671,9 @@ int main(int argc, char **argv) {
     SDL_DestroyTexture(overlayTexture);
   if (lcdTexture)
     SDL_DestroyTexture(lcdTexture);
+#ifdef PD_RETROACHIEVEMENTS
+  pd_ra_shutdown();
+#endif
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
   SDL_Quit();

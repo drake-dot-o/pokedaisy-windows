@@ -388,6 +388,8 @@ void pk_ndsm_run_frame(void)
 uint32_t* pk_ndsm_top(void) { return ds ? ds->top : nullptr; }
 uint32_t* pk_ndsm_bottom(void) { return ds ? ds->bottom : nullptr; }
 
+const uint8_t* pk_ndsm_mainram(void) { return ds ? ds->nds->MainRAM : nullptr; }
+
 int pk_ndsm_read_audio(int16_t* out, int maxFrames)
 {
     if (!ds) return 0;
